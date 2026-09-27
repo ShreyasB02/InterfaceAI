@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td bgcolor="#fff4cc"><b>Your session has expired.</b> Please re-authenticate to continue.</td></tr>
+</table>
+<br>
+<form method="get" action="{{ url_for('member_detail', member_id=member_id) }}">
+  <button type="submit">Re-authenticate</button>
+</form>
+{% endblock %}

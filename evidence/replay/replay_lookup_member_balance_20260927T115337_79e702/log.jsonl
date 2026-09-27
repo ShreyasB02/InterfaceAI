@@ -1,0 +1,10 @@
+{"ts": "2026-09-27T18:53:37.998131+00:00", "event": "run_started", "artifact": "lookup_member_balance", "version": "1.1.0", "params": {"member_id": "10001"}}
+{"ts": "2026-09-27T18:53:38.830833+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-09-27T18:53:38.841841+00:00", "event": "step_executed", "step_id": "s1", "action": "navigate", "intent": "Navigate to the starting page for this capability."}
+{"ts": "2026-09-27T18:53:38.867104+00:00", "event": "step_executed", "step_id": "s2", "action": "fill", "intent": "Fill the 'Member ID' field with a supplied value"}
+{"ts": "2026-09-27T18:53:38.909711+00:00", "event": "step_executed", "step_id": "s3", "action": "click", "intent": "Click 'Search' button"}
+{"ts": "2026-09-27T18:53:39.361265+00:00", "event": "step_executed", "step_id": "s4", "action": "click", "intent": "Click 'View Member' button"}
+{"ts": "2026-09-27T18:53:39.779155+00:00", "event": "step_executed", "step_id": "s5", "action": "extract", "intent": "Read the 'Name' value into member_name"}
+{"ts": "2026-09-27T18:53:39.786972+00:00", "event": "step_executed", "step_id": "s6", "action": "extract", "intent": "Read the 'Savings' value into savings_balance"}
+{"ts": "2026-09-27T18:53:39.837036+00:00", "event": "final_state", "outcome": "ReplayOutcome.SUCCESS", "screenshot": "screenshots/001_final_ReplayOutcome.SUCCESS.png"}
+{"ts": "2026-09-27T18:53:39.865401+00:00", "event": "run_finished", "outcome": "success"}

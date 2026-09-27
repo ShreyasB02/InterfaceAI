@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td colspan="2" bgcolor="#eeeeee"><b>Confirm Sub-Account</b></td></tr>
+  <tr><td>Member</td><td>{{ member.name }} ({{ member_id }})</td></tr>
+  <tr><td>Nickname</td><td>{{ nickname }}</td></tr>
+  <tr><td>Initial Deposit</td><td>${{ "%.2f"|format(deposit) }}</td></tr>
+</table>
+<br>
+<form method="post" action="{{ url_for('open_subaccount_confirm', member_id=member_id) }}">
+  <button type="submit" onclick="return confirm('This will open a new sub-account and cannot be undone. Continue?');">Confirm &amp; Open Account</button>
+</form>
+{% endblock %}

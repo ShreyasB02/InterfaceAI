@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td colspan="2" bgcolor="#e0ffe0"><b>Sub-account opened successfully.</b></td></tr>
+  <tr><td>New Account Number</td><td><b>{{ account_number }}</b></td></tr>
+  <tr><td>Nickname</td><td>{{ nickname }}</td></tr>
+</table>
+<br>
+<form method="get" action="{{ url_for('member_detail', member_id=member_id) }}">
+  <button type="submit">Back to Member</button>
+</form>
+{% endblock %}

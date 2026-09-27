@@ -1,0 +1,31 @@
+<!-- ACME Core Servicer Terminal -->
+<html>
+<head><title>ACME Core Servicer Terminal</title></head>
+<body bgcolor="#ffffff">
+<table width="100%" cellpadding="4" cellspacing="0" border="0" bgcolor="#003366">
+  <tr>
+    <td><font color="#ffffff" face="Verdana" size="4"><b>ACME CORE SERVICER TERMINAL</b></font></td>
+    <td align="right">
+      {% if session.get('logged_in') %}
+      <font color="#ffffff" face="Verdana" size="2">Operator: {{ session.get('employee_id') }}</font>
+      &nbsp;
+      <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+        <button type="submit">Log Off</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+<table width="100%" cellpadding="2" cellspacing="0" border="0">
+  <tr><td bgcolor="#cccccc"><font size="1">&nbsp;</font></td></tr>
+</table>
+<br>
+<table width="100%" cellpadding="8" cellspacing="0" border="0">
+  <tr>
+    <td valign="top">
+      {% block content %}{% endblock %}
+    </td>
+  </tr>
+</table>
+</body>
+</html>

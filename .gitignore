@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+
+# Playwright
+node_modules/
+
+# Evidence can contain screenshots/logs from local runs — keep the seeded
+# example evidence in git, but don't accumulate ad-hoc re-runs.
+evidence/discovery/run_*/
+evidence/replay/run_*/
+!evidence/discovery/example_run/
+!evidence/replay/example_run/
+
+# Artifact store — keep the seeded example artifact, ignore scratch ones.
+artifacts/store/*.json
+!artifacts/store/lookup_member_balance.v1.json
+!artifacts/store/open_sub_account.v1.json
+
+*.db
+.DS_Store

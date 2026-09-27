@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td colspan="2" bgcolor="#eeeeee"><b>Operator Login</b></td></tr>
+  {% if error %}
+  <tr><td colspan="2"><font color="red">{{ error }}</font></td></tr>
+  {% endif %}
+  <form method="post" action="{{ url_for('login') }}">
+    <tr>
+      <td>Employee ID</td>
+      <td><input type="text" name="employee_id"></td>
+    </tr>
+    <tr>
+      <td>Passcode</td>
+      <td><input type="password" name="passcode"></td>
+    </tr>
+    <tr>
+      <td colspan="2" align="right"><button type="submit">Log In</button></td>
+    </tr>
+  </form>
+</table>
+{% endblock %}

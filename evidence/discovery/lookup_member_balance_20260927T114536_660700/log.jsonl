@@ -1,0 +1,2 @@
+{"ts": "2026-09-27T18:45:38.453902+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-09-27T18:45:38.532292+00:00", "event": "observe", "turn": 0, "url": "http://127.0.0.1:5055/members/search", "n_elements": 3}

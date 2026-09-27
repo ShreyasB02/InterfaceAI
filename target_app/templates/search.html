@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td colspan="2" bgcolor="#eeeeee"><b>Member Search</b></td></tr>
+  <form method="post" action="{{ url_for('search') }}">
+    <tr>
+      <td>Member ID</td>
+      <td><input type="text" name="member_id" value="{{ queried_id or '' }}"></td>
+    </tr>
+    <tr>
+      <td colspan="2" align="right"><button type="submit">Search</button></td>
+    </tr>
+  </form>
+</table>
+<br>
+
+{% if not_found_id %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td bgcolor="#ffe0e0">No member found matching ID '{{ not_found_id }}'.</td></tr>
+</table>
+{% endif %}
+
+{% if result %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td colspan="2" bgcolor="#eeeeee"><b>Result</b></td></tr>
+  <tr><td>Member ID</td><td>{{ result.id }}</td></tr>
+  <tr><td>Name</td><td>{{ result.name }}</td></tr>
+  <tr>
+    <td colspan="2" align="right">
+      <form method="get" action="{{ url_for('member_detail', member_id=result.id) }}" style="display:inline">
+        <button type="submit">View Member</button>
+      </form>
+    </td>
+  </tr>
+</table>
+{% endif %}
+{% endblock %}

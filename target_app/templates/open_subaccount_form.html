@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td colspan="2" bgcolor="#eeeeee"><b>Open Sub-Account — {{ member.name }} ({{ member_id }})</b></td></tr>
+  {% if error %}
+  <tr><td colspan="2" bgcolor="#ffe0e0"><font color="red">{{ error }}</font></td></tr>
+  {% endif %}
+  <form method="post" action="{{ url_for('open_subaccount', member_id=member_id) }}">
+    <tr>
+      <td>Sub-Account Nickname</td>
+      <td><input type="text" name="nickname" value="{{ prefill_nickname or '' }}"></td>
+    </tr>
+    <tr>
+      <td>Initial Deposit (USD)</td>
+      <td><input type="text" name="initial_deposit" value="{{ prefill_deposit or '' }}"></td>
+    </tr>
+    <tr>
+      <td colspan="2" align="right"><button type="submit">Continue</button></td>
+    </tr>
+  </form>
+</table>
+{% endblock %}

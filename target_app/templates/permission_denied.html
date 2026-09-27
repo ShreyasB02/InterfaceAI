@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<table cellpadding="4" cellspacing="0" border="1">
+  <tr><td bgcolor="#ffe0e0"><b>Action not permitted.</b> Account {{ member_id }} ({{ member.name }}) is flagged for compliance hold. Sub-account creation is blocked pending review.</td></tr>
+</table>
+<br>
+<form method="get" action="{{ url_for('member_detail', member_id=member_id) }}">
+  <button type="submit">Back to Member</button>
+</form>
+{% endblock %}
