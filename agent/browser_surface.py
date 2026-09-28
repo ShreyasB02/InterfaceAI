@@ -32,6 +32,7 @@ from urllib.parse import urljoin
 from playwright.sync_api import Dialog, Page, sync_playwright
 
 from guardrails.allowlist import Allowlist
+from guardrails.safety import safe_screenshot
 from agent.locator_inference import ElementMeta, derive_locator_strategies
 
 INTERACTIVE_ELEMENTS_JS = """
@@ -145,7 +146,7 @@ class BrowserSurface:
         self._shot_count += 1
         name = f"{self._shot_count:03d}_{tag}.png"
         path = self.evidence_dir / "screenshots" / name
-        self.page.screenshot(path=str(path))
+        safe_screenshot(self.page, str(path))
         return f"screenshots/{name}"
 
     # -- perception -----------------------------------------------------

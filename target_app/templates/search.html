@@ -34,4 +34,15 @@
   </tr>
 </table>
 {% endif %}
+
+<!-- Adversarial decoy, deliberately not wired to anything: shares a
+substring ("Search") with the real button above, to stress-test locator
+resolution. Playwright's get_by_role(name=...) substring-matches by
+default, which is a real bug class elsewhere (a decoy button like this one
+caught it) — this exists to prove build_locator()'s exact=True protects
+against it (see replay/locator_resolver.py), and stays a regression guard
+for as long as it keeps passing. Placed last on the page, after every
+conditional block, so it's always the final interactive element regardless
+of search state and never shifts the indices earlier steps depend on. -->
+<button type="button" disabled>Search Advanced</button>
 {% endblock %}

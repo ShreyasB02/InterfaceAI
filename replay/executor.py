@@ -3,10 +3,10 @@ The deterministic replay engine — the production execution path. No LLM
 call anywhere in this file. Given a saved CapabilityArtifact and a set of
 input params, it drives the browser using ONLY the artifact's recorded
 steps and ranked locator strategies, and returns a ReplayResult whose
-`outcome` is one of exactly three things (see artifacts/schema/result.py
-for the full rationale): SUCCESS, BUSINESS_OUTCOME, or FAILURE — plus
-ESCALATED for a run that paused for a human and wasn't resumed before an
-optional timeout.
+`outcome` is one of: INPUT_ERROR (bad params, checked before the browser
+opens), SUCCESS, BUSINESS_OUTCOME, or FAILURE — plus ESCALATED for a run
+that paused for a human and wasn't resumed before an optional timeout.
+See artifacts/schema/result.py for the full rationale on each.
 
 Known-outcome and recoverable-pattern checks run with a short timeout
 (a few hundred ms) rather than the step timeout, deliberately: they're a
@@ -16,7 +16,6 @@ sit around waiting for on every single step.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,10 +35,12 @@ from artifacts.schema import (
     ReplayResult,
     Step,
 )
+from artifacts.validate import validate_required_params
 from escalation.control_channel import ControlChannel, InterventionTimedOut
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.redaction import redact_dict
 from guardrails.risk_policy import needs_escalation
+from guardrails.safety import safe_screenshot
 from replay.locator_resolver import LocatorResolutionError, build_locator, resolve
 
 EMPLOYEE_ID = "EMP001"
@@ -80,19 +81,8 @@ class ReplayExecutor:
     def _screenshot(self, page, tag: str) -> str:
         self._shot_count += 1
         name = f"{self._shot_count:03d}_{tag}.png"
-        page.screenshot(path=str(self.evidence_dir / "screenshots" / name))
+        safe_screenshot(page, str(self.evidence_dir / "screenshots" / name))
         return f"screenshots/{name}"
-
-    # -- param validation --------------------------------------------------
-
-    def _validate_params(self, params: dict) -> Optional[str]:
-        for spec in self.artifact.input_schema:
-            if spec.required and spec.name not in params:
-                return f"Missing required input param '{spec.name}'."
-            if spec.name in params and spec.validation_pattern:
-                if not re.match(spec.validation_pattern, str(params[spec.name])):
-                    return f"Input param '{spec.name}' value does not match required pattern {spec.validation_pattern!r}."
-        return None
 
     def _resolve_value(self, step: Step, params: dict):
         if step.value_param:
@@ -196,10 +186,10 @@ class ReplayExecutor:
         started_at = datetime.now(timezone.utc)
         self._base_url = base_url or self.artifact.target.base_url
 
-        err = self._validate_params(params)
+        err = validate_required_params(self.artifact, params)
         if err:
             return ReplayResult(
-                outcome=ReplayOutcome.FAILURE, artifact_id=self.artifact.artifact_id,
+                outcome=ReplayOutcome.INPUT_ERROR, artifact_id=self.artifact.artifact_id,
                 artifact_version=self.artifact.version, run_id=self.run_id,
                 started_at=started_at, finished_at=datetime.now(timezone.utc),
                 failure={"step_id": "preflight", "expected": "valid input params",

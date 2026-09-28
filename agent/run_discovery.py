@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from agent.discovery_loop import DiscoveryFailed, DiscoveryRun
 from artifacts import repository
+from guardrails.allowlist import AllowlistViolation
 
 load_dotenv()
 
@@ -81,6 +82,23 @@ def main():
         artifact = run.run()
     except DiscoveryFailed as e:
         print(f"\nDiscovery run did not complete: {e.reason}", file=sys.stderr)
+        print(f"Partial evidence is at {run.evidence_dir}", file=sys.stderr)
+        sys.exit(1)
+    except AllowlistViolation as e:
+        # Deliberately not caught inside the discovery loop itself (see
+        # discovery_loop.py's tool-execution try/except: an allowlist
+        # breach is re-raised rather than fed back to the model as
+        # something to route around) — but the CLI boundary still owes the
+        # person running this a clean message, not a raw traceback.
+        print(f"\nDiscovery run stopped by the allowlist guardrail: {e}", file=sys.stderr)
+        print(f"Partial evidence is at {run.evidence_dir}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        # Backstop for anything genuinely unexpected (a Playwright launch
+        # failure, the target app not running at all, ...). Every failure
+        # mode we know about by name is already caught above with a more
+        # specific, actionable message; this is only the safety net.
+        print(f"\nDiscovery run crashed unexpectedly: {type(e).__name__}: {e}", file=sys.stderr)
         print(f"Partial evidence is at {run.evidence_dir}", file=sys.stderr)
         sys.exit(1)
 

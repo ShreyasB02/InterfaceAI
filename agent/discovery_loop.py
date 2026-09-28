@@ -277,7 +277,18 @@ class DiscoveryRun:
                 if time.time() - start_time > WALL_TIMEOUT_S:
                     raise DiscoveryFailed(f"Exceeded wall timeout ({WALL_TIMEOUT_S}s) without finishing.", self.run_id)
 
-                response = self.llm.decide(system_prompt, messages)
+                try:
+                    response = self.llm.decide(system_prompt, messages)
+                except Exception as e:
+                    # A raw provider-side error (rate limit, malformed
+                    # response, a schema the provider's API rejects — the
+                    # exact two failure modes hit live while wiring up this
+                    # provider) must not surface as a bare traceback here.
+                    # Turn it into the same clean, evidence-logged failure
+                    # path as every other way a run can fail to finish.
+                    self._log({"event": "llm_call_failed", "turn": self._turn, "error": str(e)})
+                    raise DiscoveryFailed(f"LLM call failed: {type(e).__name__}: {e}", self.run_id) from e
+
                 assistant_text = "".join(
                     b.text for b in response.content if getattr(b, "type", None) == "text"
                 )
@@ -393,7 +404,7 @@ class DiscoveryRun:
             provenance=DiscoveryProvenance(
                 goal=self.goal,
                 discovery_run_id=self.run_id,
-                model_provider="google",
+                model_provider="anthropic",
                 model_name=self.llm.model,
                 recorded_at=datetime.now(timezone.utc),
                 evidence_path=f"evidence/discovery/{self.run_id}/",
