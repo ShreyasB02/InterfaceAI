@@ -1,0 +1,20 @@
+{
+  "outcome": "business_outcome",
+  "artifact_id": "0ed50a83-9437-422b-bf84-1f42304232f5",
+  "artifact_version": "1.1.0",
+  "run_id": "replay_lookup_member_balance_20261003T111328_ffb9a8",
+  "started_at": "2026-10-03T18:13:28.886777Z",
+  "finished_at": "2026-10-03T18:13:29.352471Z",
+  "outputs": {},
+  "business_outcome": {
+    "code": "member_not_found",
+    "message": "No member exists with the given ID."
+  },
+  "failure": null,
+  "escalation": null,
+  "interrupted": null,
+  "recovered_steps": [],
+  "locator_fallbacks": [],
+  "steps_executed": 3,
+  "evidence_path": "evidence/replay/replay_lookup_member_balance_20261003T111328_ffb9a8/"
+}

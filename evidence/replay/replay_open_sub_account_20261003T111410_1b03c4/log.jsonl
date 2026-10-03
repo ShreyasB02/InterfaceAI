@@ -1,0 +1,13 @@
+{"ts": "2026-10-03T18:14:10.355908+00:00", "event": "run_started", "artifact": "open_sub_account", "version": "4.1.0", "status": "approved", "attended": false, "auto_approve": true, "params": {"member_id": "10002", "nickname": "Rainy Day", "initial_deposit": "5"}}
+{"ts": "2026-10-03T18:14:10.689757+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-10-03T18:14:10.697518+00:00", "event": "step_executed", "step_id": "s1", "action": "navigate", "intent": "Navigate to the starting page for this capability."}
+{"ts": "2026-10-03T18:14:10.711025+00:00", "event": "step_executed", "step_id": "s2", "action": "fill", "intent": "Fill the 'Member ID' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T18:14:10.753255+00:00", "event": "step_executed", "step_id": "s3", "action": "click", "intent": "Click 'Search' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T18:14:10.803297+00:00", "event": "step_executed", "step_id": "s4", "action": "click", "intent": "Click 'View Member' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T18:14:11.259957+00:00", "event": "step_executed", "step_id": "s5", "action": "click", "intent": "Click 'Open Sub-Account' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T18:14:11.277739+00:00", "event": "step_executed", "step_id": "s6", "action": "fill", "intent": "Fill the 'Sub-Account Nickname' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T18:14:11.285563+00:00", "event": "step_executed", "step_id": "s7", "action": "fill", "intent": "Fill the 'Initial Deposit (USD)' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T18:14:11.321127+00:00", "event": "step_executed", "step_id": "s8", "action": "click", "intent": "Click 'Continue' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T18:14:11.742155+00:00", "event": "business_outcome", "code": "invalid_deposit_amount"}
+{"ts": "2026-10-03T18:14:11.813863+00:00", "event": "final_state", "outcome": "business_outcome", "screenshot": "screenshots/001_final_business_outcome.png"}
+{"ts": "2026-10-03T18:14:11.835627+00:00", "event": "run_finished", "outcome": "business_outcome"}

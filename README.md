@@ -94,6 +94,14 @@ Replay with other inputs to see each outcome class:
 Every run writes a structured log, screenshots, and its artifact or result
 JSON under `evidence/discovery/<run_id>/` or `evidence/replay/<run_id>/`.
 
+The committed evidence set (17 scenarios, indexed in
+[`evidence/INDEX.md`](./evidence/INDEX.md)) is produced by one command that
+runs these CLIs in order and checks each outcome:
+
+```bash
+python scripts/make_evidence.py --reviewer "$USER"
+```
+
 ## Human handoff
 
 A run hands its live browser session to a person when:
@@ -187,6 +195,7 @@ guardrails/     allowlist policy, on-the-wire enforcement, risk policy,
                 redaction, tokenizer, credential seam
 escalation/     control transport, human-action recorder, operator console,
                 scripted operator
-evidence/       output of real runs
+evidence/       output of real runs, with an index and a README
+scripts/        make_evidence.py, which regenerates the evidence set
 tests/          pytest suite and artifact fixtures
 ```

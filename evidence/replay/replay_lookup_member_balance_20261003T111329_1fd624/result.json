@@ -1,0 +1,26 @@
+{
+  "outcome": "success",
+  "artifact_id": "0ed50a83-9437-422b-bf84-1f42304232f5",
+  "artifact_version": "1.1.0",
+  "run_id": "replay_lookup_member_balance_20261003T111329_1fd624",
+  "started_at": "2026-10-03T18:13:29.467878Z",
+  "finished_at": "2026-10-03T18:13:30.849003Z",
+  "outputs": {
+    "member_name": "Dana Kim",
+    "savings_balance": 940.0
+  },
+  "business_outcome": null,
+  "failure": null,
+  "escalation": null,
+  "interrupted": null,
+  "recovered_steps": [
+    {
+      "step_id": "s5",
+      "condition": "One-time session-expired interstitial on member detail load.",
+      "action_taken": "reload_and_retry (attempt 1)"
+    }
+  ],
+  "locator_fallbacks": [],
+  "steps_executed": 6,
+  "evidence_path": "evidence/replay/replay_lookup_member_balance_20261003T111329_1fd624/"
+}

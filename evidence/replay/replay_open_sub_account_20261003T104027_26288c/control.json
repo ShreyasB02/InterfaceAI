@@ -1,0 +1,61 @@
+{
+  "run_id": "replay_open_sub_account_20261003T104027_26288c",
+  "status": "ended",
+  "human_actions": [
+    {
+      "at": "2026-10-03T17:40:50.139783+00:00",
+      "source": "operator_note",
+      "description": "Handed back from the in-page controls."
+    },
+    {
+      "at": "2026-10-03T17:40:50.267083+00:00",
+      "source": "observed",
+      "description": "Set the 'Initial Deposit (USD)' field to a value they entered (not recorded)",
+      "kind": "fill",
+      "tag": "input",
+      "name": "initial_deposit",
+      "label": "Initial Deposit (USD)"
+    },
+    {
+      "at": "2026-10-03T17:41:00.972353+00:00",
+      "source": "operator_note",
+      "description": "Handed back from the in-page controls."
+    },
+    {
+      "at": "2026-10-03T17:41:01.054293+00:00",
+      "source": "observed",
+      "description": "Clicked 'Confirm & Open Account' button",
+      "kind": "click",
+      "tag": "button",
+      "text": "Confirm & Open Account"
+    },
+    {
+      "at": "2026-10-03T17:41:01.055333+00:00",
+      "source": "observed",
+      "description": "A dialog appeared: 'This will open a new sub-account and cannot be undone. Continue?'",
+      "kind": "dialog"
+    },
+    {
+      "at": "2026-10-03T17:41:01.055985+00:00",
+      "source": "observed",
+      "description": "Page navigated to http://127.0.0.1:5055/members/10002/open-subaccount/confirm",
+      "kind": "navigate",
+      "url": "http://127.0.0.1:5055/members/10002/open-subaccount/confirm"
+    }
+  ],
+  "intervention_request": {
+    "id": "0f3fa023-2cd5-4c4a-bb4c-79bb197435e0",
+    "kind": "risk_confirmation",
+    "reason": "Step s9 (Click 'Confirm & Open Account' button) is irreversible and requires a human before proceeding.",
+    "step_id": "s9",
+    "capability": "open_sub_account",
+    "goal": "Open a new sub-account for member {member_id}. The nickname and the deposit amount are a supervisor's decision; do not choose them yourself. \u2014 Successfully opened a new sub-account with a supervisor's decision on the deposit amount.",
+    "current_url": "http://127.0.0.1:5055/members/10002/open-subaccount",
+    "actions_from": 2,
+    "screenshot_path": "screenshots/003_pre_escalation_s9.png",
+    "cdp_endpoint": "http://127.0.0.1:60046",
+    "requested_at": "2026-10-03T17:40:50.405939+00:00"
+  },
+  "step_done": true,
+  "outcome": "success"
+}

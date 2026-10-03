@@ -1,0 +1,58 @@
+<html><head><title>ACME Core Servicer Terminal</title></head>
+<body bgcolor="#ffffff">
+<table width="100%" cellpadding="4" cellspacing="0" border="0" bgcolor="#003366">
+  <tbody><tr>
+    <td><font color="#ffffff" face="Verdana" size="4"><b>ACME CORE SERVICER TERMINAL</b></font></td>
+    <td align="right">
+      
+      <font color="#ffffff" face="Verdana" size="2">Operator: EMP001</font>
+      &nbsp;
+      <form method="post" action="/logout" style="display:inline">
+        <button type="submit">Log Off</button>
+      </form>
+      
+    </td>
+  </tr>
+</tbody></table>
+<table width="100%" cellpadding="2" cellspacing="0" border="0">
+  <tbody><tr><td bgcolor="#cccccc"><font size="1">&nbsp;</font></td></tr>
+</tbody></table>
+<br>
+<table width="100%" cellpadding="8" cellspacing="0" border="0">
+  <tbody><tr>
+    <td valign="top">
+      
+<table cellpadding="4" cellspacing="0" border="1">
+  <tbody><tr><td colspan="2" bgcolor="#eeeeee"><b>Member Search</b></td></tr>
+  <form method="post" action="/members/search"></form>
+    <tr>
+      <td>Member ID</td>
+      <td><input type="text" name="member_id" value="" style=""></td>
+    </tr>
+    <tr>
+      <td colspan="2" align="right"><button type="submit">Search</button></td>
+    </tr>
+  
+</tbody></table>
+<br>
+
+
+
+
+
+<!-- Adversarial decoy, deliberately not wired to anything: shares a
+substring ("Search") with the real button above, to stress-test locator
+resolution. Playwright's get_by_role(name=...) substring-matches by
+default, which is a real bug class elsewhere (a decoy button like this one
+caught it) — this exists to prove build_locator()'s exact=True protects
+against it (see replay/locator_resolver.py), and stays a regression guard
+for as long as it keeps passing. Placed last on the page, after every
+conditional block, so it's always the final interactive element regardless
+of search state and never shifts the indices earlier steps depend on. -->
+<button type="button" disabled="">Search Advanced</button>
+
+    </td>
+  </tr>
+</tbody></table>
+
+</body></html>

@@ -1,7 +1,0 @@
-{"ts": "2026-09-27T18:47:55.213105+00:00", "event": "session_bootstrapped"}
-{"ts": "2026-09-27T18:47:55.292599+00:00", "event": "observe", "turn": 0, "url": "http://127.0.0.1:5055/members/search", "n_elements": 3}
-{"ts": "2026-09-27T18:47:57.456742+00:00", "event": "decide", "turn": 1, "assistant_text": "", "tool_name": "fill", "tool_input": {"value": "10001", "index": 1}}
-{"ts": "2026-09-27T18:47:58.369162+00:00", "event": "decide", "turn": 2, "assistant_text": "", "tool_name": "click", "tool_input": {"index": 2}}
-{"ts": "2026-09-27T18:48:01.029685+00:00", "event": "decide", "turn": 3, "assistant_text": "", "tool_name": "click", "tool_input": {"index": 3}}
-{"ts": "2026-09-27T18:48:02.543191+00:00", "event": "decide", "turn": 4, "assistant_text": "", "tool_name": "extract_field", "tool_input": {"output_name": "member_name", "label": "Name"}}
-{"ts": "2026-09-27T18:48:03.728270+00:00", "event": "decide", "turn": 5, "assistant_text": "", "tool_name": "extract_field", "tool_input": {"output_name": "savings_balance", "label": "Savings"}}

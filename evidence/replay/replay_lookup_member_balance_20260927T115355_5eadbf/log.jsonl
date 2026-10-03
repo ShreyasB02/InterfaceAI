@@ -1,8 +1,0 @@
-{"ts": "2026-09-27T18:53:55.354317+00:00", "event": "run_started", "artifact": "lookup_member_balance", "version": "1.1.0", "params": {"member_id": "99999"}}
-{"ts": "2026-09-27T18:53:55.982315+00:00", "event": "session_bootstrapped"}
-{"ts": "2026-09-27T18:53:56.006450+00:00", "event": "step_executed", "step_id": "s1", "action": "navigate", "intent": "Navigate to the starting page for this capability."}
-{"ts": "2026-09-27T18:53:56.041114+00:00", "event": "step_executed", "step_id": "s2", "action": "fill", "intent": "Fill the 'Member ID' field with a supplied value"}
-{"ts": "2026-09-27T18:53:56.093070+00:00", "event": "step_executed", "step_id": "s3", "action": "click", "intent": "Click 'Search' button"}
-{"ts": "2026-09-27T18:53:56.112602+00:00", "event": "business_outcome", "code": "member_not_found"}
-{"ts": "2026-09-27T18:53:56.187273+00:00", "event": "final_state", "outcome": "ReplayOutcome.BUSINESS_OUTCOME", "screenshot": "screenshots/001_final_ReplayOutcome.BUSINESS_OUTCOME.png"}
-{"ts": "2026-09-27T18:53:56.217597+00:00", "event": "run_finished", "outcome": "business_outcome"}

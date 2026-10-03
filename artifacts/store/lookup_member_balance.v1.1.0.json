@@ -1,17 +1,24 @@
 {
-  "artifact_id": "9d27626c-b372-4ec2-bee1-30ebeca25f58",
+  "artifact_id": "0ed50a83-9437-422b-bf84-1f42304232f5",
   "name": "lookup_member_balance",
   "version": "1.1.0",
-  "description": "Look up member 10001 and read their current savings balance. — Looked up member 10001 (Alice Rivera) and retrieved their current savings balance of $8150.32.",
-  "status": "draft",
-  "created_at": "2026-09-27T18:52:45.665064Z",
+  "description": "Look up member {member_id} and read their current savings balance. — Successfully looked up member {member_id} and retrieved their current savings balance.",
+  "status": "approved",
+  "review": {
+    "reviewed_by": "ShreyasB02",
+    "reviewed_at": "2026-10-03T18:13:25.718628Z",
+    "notes": "Reviewed while generating the evidence set (scripts/make_evidence.py).",
+    "content_hash": "3257c44977ebe2735a131ef4c6bc346fa346d2148c7a64315ec6811c0e06335c"
+  },
+  "created_at": "2026-10-03T18:13:25.252927Z",
   "provenance": {
-    "goal": "Look up member 10001 and read their current savings balance.",
-    "discovery_run_id": "lookup_member_balance_20260927T115235_5cb009",
-    "model_provider": "google",
-    "model_name": "gemini-3.8-flash",
-    "recorded_at": "2026-09-27T18:52:45.664994Z",
-    "evidence_path": "evidence/discovery/lookup_member_balance_20260927T115235_5cb009/"
+    "goal": "Look up member {member_id} and read their current savings balance.",
+    "discovery_run_id": "lookup_member_balance_20261003T111302_c4ebbc",
+    "model_provider": "openrouter",
+    "model_name": "google/gemini-2.5-flash",
+    "recorded_at": "2026-10-03T18:13:25.252781Z",
+    "evidence_path": "evidence/discovery/lookup_member_balance_20261003T111302_c4ebbc/",
+    "human_interventions": 0
   },
   "target": {
     "surface_type": "legacy_web",
@@ -52,6 +59,7 @@
       "output_name": null,
       "on_dialog": null,
       "timeout_ms": 5000,
+      "origin": "model",
       "risk_level": "safe",
       "requires_confirmation": false
     },
@@ -74,6 +82,7 @@
       "output_name": null,
       "on_dialog": null,
       "timeout_ms": 5000,
+      "origin": "model",
       "risk_level": "safe",
       "requires_confirmation": false
     },
@@ -96,6 +105,7 @@
       "output_name": null,
       "on_dialog": null,
       "timeout_ms": 5000,
+      "origin": "model",
       "risk_level": "safe",
       "requires_confirmation": false
     },
@@ -118,6 +128,7 @@
       "output_name": null,
       "on_dialog": null,
       "timeout_ms": 5000,
+      "origin": "model",
       "risk_level": "safe",
       "requires_confirmation": false
     },
@@ -140,6 +151,7 @@
       "output_name": "member_name",
       "on_dialog": null,
       "timeout_ms": 5000,
+      "origin": "model",
       "risk_level": "safe",
       "requires_confirmation": false
     },
@@ -162,12 +174,13 @@
       "output_name": "savings_balance",
       "on_dialog": null,
       "timeout_ms": 5000,
+      "origin": "model",
       "risk_level": "safe",
       "requires_confirmation": false
     }
   ],
   "checkpoint": {
-    "description": "The Member Detail page for member 10001 is visible with Accounts table displaying Savings account SAV-10001-01 and balance $8150.32.",
+    "description": "The member's detail page shows their name as {member_name} and their savings balance as [[TOK16]].",
     "method": "url_matches",
     "value": "/members/{member_id}",
     "target": null
