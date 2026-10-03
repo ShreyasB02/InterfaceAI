@@ -16,7 +16,7 @@ An interface.ai take-home; the brief's seven REPORT headings and the
 
 ```bash
 pip install -r requirements.txt && python -m playwright install chromium
-pytest                         # 48 tests, no API key; starts target_app itself if needed
+pytest                         # 50 tests, no API key; starts target_app itself if needed
 python target_app/app.py       # needed for the CLIs below (port 5055)
 
 python -m agent.run_discovery --capability-name <name> --goal "..." \

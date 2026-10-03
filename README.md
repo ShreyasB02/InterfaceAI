@@ -168,7 +168,7 @@ redacted; credentials never reach an artifact, a log, or the model.
 pytest
 ```
 
-48 tests, about a minute, no API key and nothing to start first: the model's
+50 tests, about a minute, no API key and nothing to start first: the model's
 decisions are scripted, the target app is started by the test session if it
 isn't running, and output goes to `/tmp`, never to `evidence/`. Everything
 else is the real code path, including the CDP handoff.

@@ -155,6 +155,8 @@ hands it back; you then continue from the new page state. Do not guess in their 
 permitted") that is a legitimate answer, not a bug, and not something a human could fix \
 either — call finish_stuck with that as the reason rather than trying to force the goal through.
   - Work efficiently. Don't re-read the same page twice in a row without taking an action.
+  - Every tool call takes a `reason`: one sentence on why you are taking that action given \
+what the page shows. It is recorded for audit, so make it specific.
 
 When the goal is genuinely achieved, call finish_success with a one-sentence summary and a \
 description of what on the final page proves it (this becomes the artifact's checkpoint)."""
@@ -457,13 +459,19 @@ class DiscoveryRun:
                 )
                 tool_use = next((b for b in response.content if b.type == "tool_use"), None)
 
+                # `reason` is the model's stated rationale (agent/tools.py).
+                # It is logged, and stripped from what the tool receives.
+                tool_args = ({k: v for k, v in tool_use.input.items() if k != "reason"}
+                             if tool_use is not None else None)
+
                 self._log({
                     "event": "decide", "turn": self._turn,
+                    "reason": tool_use.input.get("reason") if tool_use is not None else None,
                     "provider": getattr(response, "provider", None),
                     "model": getattr(response, "model", None) or self.llm.model,
                     "assistant_text": assistant_text,
                     "tool_name": tool_use.name if tool_use else None,
-                    "tool_input": tool_use.input if tool_use else None,
+                    "tool_input": tool_args,
                     "vision_attached": latest_screenshot is not None,
                 })
 
@@ -495,7 +503,7 @@ class DiscoveryRun:
                 # Stuck without saying so: the same call, with the same input,
                 # over and over. Bring a human in rather than burn the step
                 # budget (or do the same possibly-harmful thing a fourth time).
-                call = (tool_use.name, json.dumps(tool_use.input, sort_keys=True, default=str))
+                call = (tool_use.name, json.dumps(tool_args, sort_keys=True, default=str))
                 repeat_count = repeat_count + 1 if call == last_call else 1
                 last_call = call
                 if repeat_count >= STUCK_REPEAT_THRESHOLD:
@@ -517,7 +525,7 @@ class DiscoveryRun:
 
                 try:
                     result_text, action_kind, rec, obs_for_shot = self._execute_tool(
-                        browser, tool_use.name, tool_use.input
+                        browser, tool_use.name, tool_args
                     )
                     if action_kind is not None:
                         self._record_step_for_action(action_kind, rec)

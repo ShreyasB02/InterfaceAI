@@ -124,3 +124,20 @@ TOOLS = [
         },
     },
 ]
+
+# Every tool takes a required `reason`: why this action, given what the model
+# sees. Some providers return a tool call with no accompanying text, which
+# would leave the run's log saying what was done but not why; making the
+# rationale an argument gets it on every call from every provider. The
+# harness logs it and strips it before acting — it never changes what the
+# tool does. request_human and finish_stuck already define their own
+# `reason`, which serves the same purpose.
+_REASON = {
+    "type": "string",
+    "description": "One sentence: why you are taking this action now, given what the page shows.",
+}
+for _tool in TOOLS:
+    _schema = _tool["input_schema"]
+    if "reason" not in _schema["properties"]:
+        _schema["properties"]["reason"] = _REASON
+        _schema["required"] = [*_schema.get("required", []), "reason"]

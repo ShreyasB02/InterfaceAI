@@ -60,7 +60,8 @@ class ScriptedLLMClient:
 
 
 SCRIPT = [
-    ("fill", {"index": 1, "value": "10001"}, "Filling in the member ID."),
+    ("fill", {"index": 1, "value": "10001", "reason": "The Member ID field is empty and the goal names member 10001."},
+     None),  # no accompanying text, as some providers return: the reason argument is the only "why"
     ("click", {"index": 2}, "Submitting the search."),
     # The model names the member before the value has been extracted.
     ("click", {"index": 3}, "The results show Alice Rivera; opening the detail page."),
@@ -127,6 +128,21 @@ def test_log_is_scrubbed_of_values_mentioned_before_extraction():
     log = (run_dir / "log.jsonl").read_text()
     assert "Alice Rivera" not in log, "extracted record data left in the log"
     assert "[REDACTED-member_name]" in log
+
+
+def test_every_decision_logs_its_reason():
+    """The rationale travels as a tool argument, so it is logged even when
+    the provider sends no text alongside the tool call — and it is stripped
+    before the tool runs (the fill above succeeded with it present)."""
+    import json
+    from agent.tools import TOOLS
+
+    assert all("reason" in t["input_schema"]["required"] for t in TOOLS), "every tool must require a reason"
+    run_dir = sorted(Path("/tmp/cua_dry_run_evidence").iterdir())[-1]
+    events = [json.loads(line) for line in (run_dir / "log.jsonl").read_text().splitlines()]
+    first = next(e for e in events if e["event"] == "decide")
+    assert first["assistant_text"] == "" and first["reason"].startswith("The Member ID field is empty"), first
+    assert "reason" not in first["tool_input"], first
 
 
 if __name__ == "__main__":
