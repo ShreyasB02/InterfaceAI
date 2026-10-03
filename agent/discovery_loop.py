@@ -378,6 +378,21 @@ class DiscoveryRun:
         finally:
             # However the run ended, nothing is waiting on a human any more.
             self.control.end(outcome)
+            self._scrub_log()
+
+    def _scrub_log(self) -> None:
+        """Final pass over this run's log. A value is only known to be
+        record data once it has been extracted, but the model may have
+        mentioned it earlier ("the results show Alice Rivera..."). Those
+        earlier lines were written before we knew, so they are rewritten
+        now, with everything the run learned."""
+        if not self._record_values or not self._log_path.exists():
+            return
+        lines = [json.dumps(scrub_known_value(json.loads(line), self._record_values), default=str)
+                 for line in self._log_path.read_text().splitlines() if line.strip()]
+        tmp = self._log_path.with_suffix(".jsonl.tmp")
+        tmp.write_text("\n".join(lines) + "\n")
+        tmp.replace(self._log_path)
 
     def _run(self) -> CapabilityArtifact:
         with BrowserSurface(self.base_url, self.evidence_dir, self.allowlist, headless=self.headless,

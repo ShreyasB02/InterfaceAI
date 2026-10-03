@@ -13,13 +13,16 @@ changed. The only in-place change allowed is a review-state transition
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Optional
 
 from artifacts.schema import ArtifactStatus, CapabilityArtifact
 
-STORE_DIR = Path(__file__).parent / "store"
+# ARTIFACT_STORE_DIR points the CLIs at another store (a scratch one, say)
+# without touching the repo's.
+STORE_DIR = Path(os.environ.get("ARTIFACT_STORE_DIR") or Path(__file__).parent / "store")
 
 _FILENAME = re.compile(r"^(?P<name>.+)\.v(?P<version>\d+\.\d+\.\d+)\.json$")
 

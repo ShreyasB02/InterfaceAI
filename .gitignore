@@ -8,12 +8,8 @@ venv/
 # Playwright
 node_modules/
 
-# Evidence can contain screenshots/logs from local runs — keep the seeded
-# example evidence in git, but don't accumulate ad-hoc re-runs.
-evidence/discovery/run_*/
-evidence/replay/run_*/
-!evidence/discovery/example_run/
-!evidence/replay/example_run/
+# Runs and artifacts set aside while curating evidence/ (kept locally, not submitted)
+.evidence-archive/
 
 # Artifact store: every version is tracked — the store is the review history.
 

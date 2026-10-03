@@ -62,7 +62,8 @@ class ScriptedLLMClient:
 SCRIPT = [
     ("fill", {"index": 1, "value": "10001"}, "Filling in the member ID."),
     ("click", {"index": 2}, "Submitting the search."),
-    ("click", {"index": 3}, "Opening the found member's detail page."),
+    # The model names the member before the value has been extracted.
+    ("click", {"index": 3}, "The results show Alice Rivera; opening the detail page."),
     ("extract_field", {"label": "Name", "output_name": "member_name"}, "Reading the member's name."),
     ("extract_field", {"label": "Savings", "output_name": "savings_balance"}, "Reading the savings balance."),
     ("finish_success", {
@@ -116,6 +117,16 @@ def test_discovery_records_a_replayable_artifact():
     print(f"steps: {[(s.step_id, s.action) for s in artifact.steps]}")
     print(f"checkpoint: {artifact.checkpoint.value}")
     print(f"evidence dir: {run.evidence_dir} ({n_shots} screenshots)")
+
+
+def test_log_is_scrubbed_of_values_mentioned_before_extraction():
+    """Runs after the test above, on its evidence. The model's text named
+    the member one turn before extract_field read the name; the end-of-run
+    pass must have removed it from that earlier log line too."""
+    run_dir = sorted(Path("/tmp/cua_dry_run_evidence").iterdir())[-1]
+    log = (run_dir / "log.jsonl").read_text()
+    assert "Alice Rivera" not in log, "extracted record data left in the log"
+    assert "[REDACTED-member_name]" in log
 
 
 if __name__ == "__main__":
