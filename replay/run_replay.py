@@ -48,7 +48,7 @@ from dotenv import load_dotenv
 from artifacts import repository
 from artifacts.validate import validate_required_params
 from escalation.control_channel import ControlChannel
-from escalation.simulated_operator import simulate_operator_takeover
+from escalation.simulated_operator import parse_action, simulate_operator_takeover
 from replay.executor import ReplayExecutor
 
 load_dotenv()
@@ -77,9 +77,17 @@ def main():
     parser.add_argument("--auto-approve", action="store_true",
                          help="Don't escalate irreversible steps: the review that approved the "
                               "artifact stands as their confirmation. Refused for a draft.")
-    parser.add_argument("--simulate-operator", default=None, metavar="BUTTON_LABEL",
-                         help="If escalation is hit, reattach via CDP and click this button, "
-                              "proving the handoff mechanism without a human physically present.")
+    parser.add_argument("--escalate-on-failure", action="store_true",
+                         help="When a step fails and replay can't recover, hand the live session to a "
+                              "human instead of returning FAILURE straight away.")
+    parser.add_argument("--simulate-operator", action="append", default=None, metavar="ACTION",
+                         help="If an escalation is hit, reattach via CDP and perform this action on the "
+                              "same live session: 'click:<button label>' or 'fill:<field name>=<value>' "
+                              "(a bare label means click). Repeatable. Proves the handoff without a "
+                              "human physically present.")
+    parser.add_argument("--operator-leaves-step", action="store_true",
+                         help="With --simulate-operator: the operator hands the paused step back for "
+                              "automation to run, instead of having performed it themselves.")
     parser.add_argument("--simulate-cancel-after", type=float, default=None, metavar="SECONDS",
                          help="Tier 2 #7's 'cancel': once an escalation is hit, wait this many "
                               "seconds and then cancel it instead of resolving it — the run reports "
@@ -129,11 +137,18 @@ def main():
 
     on_escalation = None
     if args.simulate_operator:
+        try:
+            operator_actions = [parse_action(a if ":" in a else f"click:{a}") for a in args.simulate_operator]
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
+
         def on_escalation(control, ctx):  # noqa: ANN001
             t = threading.Thread(
                 target=simulate_operator_takeover,
-                args=(control, args.simulate_operator),
-                kwargs={"accept_dialog": True},
+                args=(control,),
+                kwargs={"actions": operator_actions, "accept_dialog": True,
+                        "step_done": False if args.operator_leaves_step else None},
                 daemon=True,
             )
             t.start()
@@ -184,6 +199,7 @@ def main():
             base_url=args.target_base_url,
             auto_approve=args.auto_approve,
             attended=args.attended,
+            escalate_on_failure=args.escalate_on_failure,
             escalation_timeout_s=args.escalation_timeout,
             on_escalation=on_escalation,
         )

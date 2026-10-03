@@ -108,6 +108,8 @@ including the escalation/handoff mechanism:
 
 ```bash
 python3 tests/test_discovery_dry_run.py    # scripted stand-in for the LLM
+python3 tests/test_discovery_handoff.py     # discovery stuck -> human on the live session -> resume
+python3 tests/test_artifact_store.py        # versioning and the review gate (no browser)
 python3 tests/test_llm_providers.py         # provider adapters, retry and failover (no network)
 python3 tests/test_replay_scenarios.py     # replay never needs an LLM anyway
 ```
@@ -116,6 +118,39 @@ These assert against the real code paths (locator inference, step recording,
 the three-way outcome taxonomy, CDP-based session handoff) — only the
 model's decisions are scripted. Their output goes to `/tmp`, never to
 `/evidence/`, so it can't be mistaken for the graded run.
+
+## Human handoff
+
+A run hands its live browser session to a person when the model asks for
+one, when the harness sees it stuck, when a replay step needs confirmation,
+or (with `--escalate-on-failure`) when a replay step fails. To resolve one
+by hand:
+
+```bash
+python -m escalation.operator_console          # http://127.0.0.1:5056
+# open /console?run_dir=<the run's evidence folder>
+```
+
+The console shows why the run stopped, a screenshot, and the CDP endpoint.
+Open `chrome://inspect`, add that endpoint under "Discover network targets"
+and click "inspect" to drive the same page (or pass `--headed` and use the
+window). Your clicks and field edits are recorded automatically; then hand
+back from the console.
+
+Without a person present, `--simulate-operator` reattaches over CDP and
+performs scripted actions on the same session (replay takes the same flag;
+see [`evidence/README.md`](./evidence/README.md)):
+
+```bash
+# discovery: the goal leaves a decision to a supervisor, so the model calls request_human
+python -m agent.run_discovery --capability-name open_sub_account \
+  --goal "Open a new sub-account for member 10001. The nickname and the deposit amount are a supervisor's decision; do not choose them yourself." \
+  --entry-path /members/search --param member_id=10001 --param nickname="Vacation Fund" \
+  --output new_account_number:string:"The new sub-account's number" \
+  --simulate-operator "fill:nickname=Vacation Fund" --simulate-operator "fill:initial_deposit=150" \
+  --simulate-operator "click:Continue"
+
+```
 
 ## Repo structure
 
@@ -131,8 +166,8 @@ agent/                discovery: browser surface, locator inference,
                       LLM tool-use loop, artifact assembly, augmentation pass
 replay/               deterministic replay: locator resolution, the executor
 guardrails/           allowlist, redaction, risk/escalation policy
-escalation/           control-channel handoff, mock operator console,
-                      the CDP-reattachment "simulated operator"
+escalation/           control transport, human-action recorder, mock operator
+                      console, the CDP-reattachment "simulated operator"
 evidence/             where real run output lands (empty until you run it)
 tests/                fixtures + the two no-API-key integration tests above
 ```

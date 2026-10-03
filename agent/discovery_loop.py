@@ -52,7 +52,16 @@ from artifacts.schema import (
 )
 from agent.browser_surface import ActionRecord, BrowserSurface
 from agent.llm import LLMClient
-from agent.locator_inference import derive_locator_strategies
+from agent.locator_inference import ElementMeta, derive_locator_strategies
+from escalation.control_channel import ControlChannel
+from escalation.recorder import ObservedAction
+from escalation.transport import (
+    ControlSignal,
+    EscalationAbandoned,
+    InterventionKind,
+    InterventionTimedOut,
+    RunInterrupted,
+)
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.redaction import redact_dict
 from guardrails.tokenizer import TOKEN_EXPLAINER, Tokenizer
@@ -61,7 +70,12 @@ EMPLOYEE_ID = "EMP001"
 PASSCODE = "demo1234"
 
 MAX_STEPS = 25
-WALL_TIMEOUT_S = 180
+WALL_TIMEOUT_S = 180  # the model's working time; time spent waiting on a human doesn't count
+
+# "Stuck" as the harness sees it, independent of the model saying so:
+STUCK_REPEAT_THRESHOLD = 3   # the same tool call with the same input, this many times running
+STUCK_ERROR_THRESHOLD = 3    # this many consecutive tool calls that raised
+MAX_ESCALATIONS = 3          # a run that needs a human more often than this isn't a capability
 
 
 class DiscoveryFailed(Exception):
@@ -126,14 +140,27 @@ wait_for_text rather than immediately assuming failure.
 a button's label or context suggests this, and you intend to proceed, set on_dialog='accept' \
 on that click in case it opens a native confirmation dialog. Only accept a dialog you \
 actually intend to proceed with.
+  - If you cannot safely proceed but a person could — the goal leaves a decision to someone \
+else, you cannot find the control you need, or the screen is not what you expected — call \
+request_human with the reason. A human operator takes over this same session, acts, and \
+hands it back; you then continue from the new page state. Do not guess in their place.
   - If the page shows a clear, named negative outcome (e.g. "no such member", "action not \
-permitted") that is a legitimate answer, not a bug — call finish_stuck with that as the \
-reason rather than trying to force the goal through. A human will decide what to do with \
-that class of outcome separately; this run's job is to record the working, achievable path.
+permitted") that is a legitimate answer, not a bug, and not something a human could fix \
+either — call finish_stuck with that as the reason rather than trying to force the goal through.
   - Work efficiently. Don't re-read the same page twice in a row without taking an action.
 
 When the goal is genuinely achieved, call finish_success with a one-sentence summary and a \
 description of what on the final page proves it (this becomes the artifact's checkpoint)."""
+
+
+def _append_to_last_user_message(messages: list[dict], text: str) -> None:
+    """Add text to the latest user turn instead of opening a second
+    consecutive user turn, which not every provider accepts."""
+    last = messages[-1]
+    if isinstance(last["content"], str):
+        last["content"] += "\n\n" + text
+    else:
+        last["content"][-1]["content"] += "\n\n" + text
 
 
 def _format_observation_for_model(obs, tokenizer: Tokenizer, action_note: Optional[str] = None) -> str:
@@ -168,7 +195,8 @@ class DiscoveryRun:
     def __init__(self, *, capability_name: str, goal: str, base_url: str, entry_path: str,
                  params: dict[str, str], outputs: list[dict], evidence_root: Path,
                  param_types: Optional[dict[str, str]] = None, headless: bool = True,
-                 vision: bool = True, llm=None, artifact_version: str = "1.0.0"):
+                 vision: bool = True, llm=None, artifact_version: str = "1.0.0",
+                 escalation_timeout_s: Optional[float] = 600, on_escalation=None, cdp_port: int = 9334):
         self.capability_name = capability_name
         self.goal = goal
         self.base_url = base_url
@@ -204,6 +232,15 @@ class DiscoveryRun:
 
         self.recorded_steps: list[Step] = []
         self._turn = 0
+
+        # Human handoff (see _escalate). Same control channel and file layout
+        # replay uses, so the operator console works on a discovery run too.
+        self.control = ControlChannel(self.run_id, self.evidence_dir)
+        self.escalation_timeout_s = escalation_timeout_s
+        self.on_escalation = on_escalation
+        self.cdp_port = cdp_port
+        self.interventions: list[dict] = []
+        self._human_wait_s = 0.0
 
     def _read_screenshot_bytes(self, relative_path: Optional[str]) -> Optional[bytes]:
         if not relative_path:
@@ -298,7 +335,8 @@ class DiscoveryRun:
             return
 
     def run(self) -> CapabilityArtifact:
-        with BrowserSurface(self.base_url, self.evidence_dir, self.allowlist, headless=self.headless) as browser:
+        with BrowserSurface(self.base_url, self.evidence_dir, self.allowlist, headless=self.headless,
+                            cdp_port=self.cdp_port) as browser:
             self._bootstrap_session(browser)
 
             nav_rec = browser.navigate(self.entry_path)
@@ -317,13 +355,31 @@ class DiscoveryRun:
             extracted_outputs: dict[str, str] = {}
             finish_summary: Optional[str] = None
             checkpoint_desc: Optional[str] = None
+            last_call: Optional[tuple] = None
+            repeat_count = 0
+            error_streak = 0
 
             while True:
                 self._turn += 1
                 if self._turn > MAX_STEPS:
                     raise DiscoveryFailed(f"Exceeded max steps ({MAX_STEPS}) without finishing.", self.run_id)
-                if time.time() - start_time > WALL_TIMEOUT_S:
+                if time.time() - start_time - self._human_wait_s > WALL_TIMEOUT_S:
                     raise DiscoveryFailed(f"Exceeded wall timeout ({WALL_TIMEOUT_S}s) without finishing.", self.run_id)
+
+                # An operator can stop the run, or ask for the wheel, at any
+                # turn boundary — not only when the run itself asks for help.
+                sig = self.control.pending_signal()
+                if sig:
+                    self.control.clear_signal()
+                    if sig.get("type") == ControlSignal.INTERRUPT:
+                        self._log({"event": "run_interrupted", "turn": self._turn, "reason": sig.get("reason")})
+                        raise RunInterrupted(sig.get("reason") or "Operator interrupted the run.")
+                    if sig.get("type") == ControlSignal.TAKEOVER:
+                        note, obs = self._escalate(browser, sig.get("reason") or "Operator requested manual takeover.",
+                                                   InterventionKind.TAKEOVER)
+                        _append_to_last_user_message(messages, note)
+                        if self.vision:
+                            latest_screenshot = self._read_screenshot_bytes(obs.screenshot_path)
 
                 try:
                     response = self.llm.decide(system_prompt, messages, image_bytes=latest_screenshot)
@@ -366,6 +422,34 @@ class DiscoveryRun:
                     self._log({"event": "finish_success", "summary": finish_summary})
                     break
 
+                if tool_use.name == "request_human":
+                    note, obs = self._escalate(browser, tool_use.input.get("reason", "unspecified"),
+                                               InterventionKind.STUCK)
+                    messages.append({"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": tool_use.id, "content": note}]})
+                    if self.vision:
+                        latest_screenshot = self._read_screenshot_bytes(obs.screenshot_path)
+                    last_call, repeat_count, error_streak = None, 0, 0
+                    continue
+
+                # Stuck without saying so: the same call, with the same input,
+                # over and over. Bring a human in rather than burn the step
+                # budget (or do the same possibly-harmful thing a fourth time).
+                call = (tool_use.name, json.dumps(tool_use.input, sort_keys=True, default=str))
+                repeat_count = repeat_count + 1 if call == last_call else 1
+                last_call = call
+                if repeat_count >= STUCK_REPEAT_THRESHOLD:
+                    note, obs = self._escalate(
+                        browser, f"No progress: the agent issued the same {tool_use.name} call "
+                        f"{repeat_count} times in a row.", InterventionKind.STUCK)
+                    messages.append({"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": tool_use.id,
+                         "content": "That call was not executed — you were repeating yourself. " + note}]})
+                    if self.vision:
+                        latest_screenshot = self._read_screenshot_bytes(obs.screenshot_path)
+                    last_call, repeat_count, error_streak = None, 0, 0
+                    continue
+
                 if tool_use.name == "finish_stuck":
                     reason = tool_use.input.get("reason", "unspecified")
                     self._log({"event": "finish_stuck", "reason": reason})
@@ -381,11 +465,21 @@ class DiscoveryRun:
                         extracted_outputs[rec.output_name] = rec.extracted_value
                     if self.vision and obs_for_shot is not None:
                         latest_screenshot = self._read_screenshot_bytes(obs_for_shot.screenshot_path)
+                    error_streak = 0
                 except AllowlistViolation:
                     raise
                 except Exception as e:  # noqa: BLE001 - deliberately broad: feed the error back to the model
                     result_text = f"Error executing {tool_use.name}: {e}"
                     self._log({"event": "tool_error", "turn": self._turn, "error": str(e)})
+                    error_streak += 1
+                    if error_streak >= STUCK_ERROR_THRESHOLD:
+                        note, obs = self._escalate(
+                            browser, f"No progress: {error_streak} tool calls in a row failed. Last error: "
+                            f"{str(e).splitlines()[0][:200]}", InterventionKind.STUCK)
+                        result_text += "\n" + note
+                        if self.vision:
+                            latest_screenshot = self._read_screenshot_bytes(obs.screenshot_path)
+                        last_call, repeat_count, error_streak = None, 0, 0
 
                 messages.append({
                     "role": "user",
@@ -393,6 +487,123 @@ class DiscoveryRun:
                 })
 
             return self._build_artifact(finish_summary, checkpoint_desc, extracted_outputs, final_url_path)
+
+    # -- human handoff ---------------------------------------------------
+
+    def _escalate(self, browser: BrowserSurface, reason: str, kind: str):
+        """Hand the live discovery session to a human and take it back.
+
+        Same control-transfer model as replay (replay/executor.py's
+        _handoff): from request_intervention() until wait_for_resume()
+        returns, the human owns the session and this loop performs no page
+        action — it only idles, receiving the recorder's observations.
+
+        What the human does is recorded twice over: as evidence, and as
+        artifact steps (origin="human"), so a flow that needed a person is
+        still captured end to end. Returns (note for the model, the fresh
+        observation it was built from).
+        """
+        if len(self.interventions) >= MAX_ESCALATIONS:
+            raise DiscoveryFailed(
+                f"Needed a human more than {MAX_ESCALATIONS} times; giving up. Last reason: {reason}", self.run_id)
+
+        shot = browser.screenshot(f"turn{self._turn}_pre_escalation")
+        req_id = str(uuid.uuid4())
+        self.control.request_intervention(
+            reason=reason, step_id=f"turn{self._turn}", capability=self.capability_name,
+            screenshot_path=shot, cdp_endpoint=browser.cdp_endpoint, intervention_request_id=req_id,
+            kind=kind, goal=self.goal, current_url=browser.page.url,
+        )
+        self._log({"event": "escalation_requested", "turn": self._turn, "request_id": req_id, "kind": kind,
+                   "reason": reason, "screenshot": shot, "recorded_steps_so_far": len(self.recorded_steps)})
+
+        waited_from = time.time()
+        browser.recorder.start()
+        try:
+            if self.on_escalation:
+                self.on_escalation(self.control, {"turn": self._turn, "run_dir": str(self.evidence_dir), "kind": kind})
+            resume = self.control.wait_for_resume(timeout_s=self.escalation_timeout_s, idle=browser.recorder.pump)
+        except InterventionTimedOut as e:
+            self._log({"event": "escalation_timed_out", "request_id": req_id, "detail": str(e)})
+            raise DiscoveryFailed(f"Escalated to a human ({reason}) but nobody resolved it: {e}", self.run_id) from e
+        except EscalationAbandoned as e:
+            self._log({"event": "escalation_cancelled", "request_id": req_id, "detail": str(e)})
+            raise DiscoveryFailed(f"Escalation cancelled by an operator: {e}", self.run_id) from e
+        finally:
+            observed = browser.recorder.stop()
+            self._human_wait_s += time.time() - waited_from
+
+        observed_evidence = [a.to_evidence(self.params) for a in observed]
+        for entry in observed_evidence:
+            self.control.record_human_action(
+                entry["description"], source="observed",
+                detail={k: v for k, v in entry.items() if k not in ("at", "source", "description")})
+        human_actions = observed_evidence + resume.get("human_actions", [])
+        new_steps = self._record_human_steps(observed)
+
+        obs = browser.observe(f"turn{self._turn}_post_escalation")
+        self.interventions.append({"request_id": req_id, "kind": kind, "reason": reason,
+                                   "turn": self._turn, "human_actions": human_actions})
+        self._log({"event": "escalation_resumed", "turn": self._turn, "request_id": req_id,
+                   "human_actions": human_actions, "steps_recorded_from_human": new_steps,
+                   "screenshot": obs.screenshot_path})
+
+        did = "; ".join(a.describe(self.params) for a in observed if a.kind != "navigate") or "nothing on the page"
+        note = ("A human operator took control of this session and has handed it back. They did: "
+                f"{self.tokenizer.tokenize(did)}. Those actions are already recorded — do not repeat them. "
+                "Continue toward the goal from the current page state:\n"
+                + _format_observation_for_model(obs, self.tokenizer))
+        return note, obs
+
+    def _record_human_steps(self, observed: list[ObservedAction]) -> list[str]:
+        """Turn what the operator did into artifact steps, with the same
+        locator inference the model's own actions get."""
+        new_ids: list[str] = []
+        for n, action in enumerate(observed):
+            if action.kind not in ("click", "fill"):
+                continue
+            el = ElementMeta(index=-1, tag=action.tag, type=action.type, name=action.name,
+                             value=action.text if action.tag == "input" else "", text=action.text,
+                             label=action.label)
+            step_id = f"s{len(self.recorded_steps) + 1}"
+            target = LocatorSpec(strategies=derive_locator_strategies(el))
+            intent = f"{action.describe(self.params)} (performed by a human operator during discovery)"
+
+            if action.kind == "fill":
+                value_param = next((k for k, v in self.params.items() if str(v) == (action.value or "")), None)
+                # A value the human typed that isn't a declared input is
+                # never written to the artifact. The step is kept, flagged,
+                # and replay hands it to a human rather than inventing one.
+                self.recorded_steps.append(Step(
+                    step_id=step_id, intent=intent, action=ActionType.FILL, target=target, origin="human",
+                    value_param=value_param,
+                    risk_level=RiskLevel.SAFE if value_param else RiskLevel.RISKY,
+                    requires_confirmation=value_param is None,
+                ))
+                new_ids.append(step_id)
+                continue
+
+            # A click that raised a native dialog on the human's watch is
+            # irreversible by the same rule the model's clicks follow.
+            later = observed[n + 1:]
+            next_input = next((i for i, a in enumerate(later) if a.kind in ("click", "fill")), len(later))
+            dialog = next((a for a in later[:next_input] if a.kind == "dialog"), None)
+            self.recorded_steps.append(Step(
+                step_id=step_id, intent=intent, action=ActionType.CLICK, target=target, origin="human",
+                risk_level=RiskLevel.IRREVERSIBLE if dialog else RiskLevel.SAFE,
+                requires_confirmation=dialog is not None,
+            ))
+            new_ids.append(step_id)
+            if dialog:
+                navigated = any(a.kind == "navigate" for a in later[:next_input])
+                dialog_id = f"s{len(self.recorded_steps) + 1}"
+                self.recorded_steps.append(Step(
+                    step_id=dialog_id, intent=f"Handle the confirmation dialog: {dialog.message!r}",
+                    action=ActionType.HANDLE_DIALOG, on_dialog="accept" if navigated else "dismiss",
+                    origin="human", risk_level=RiskLevel.IRREVERSIBLE, requires_confirmation=True,
+                ))
+                new_ids.append(dialog_id)
+        return new_ids
 
     def _execute_tool(self, browser: BrowserSurface, name: str, tool_input: dict):
         """Returns (result_text, action_kind, rec, obs_for_screenshot). The
@@ -486,6 +697,7 @@ class DiscoveryRun:
                 model_name=self.llm.model,
                 recorded_at=datetime.now(timezone.utc),
                 evidence_path=f"evidence/discovery/{self.run_id}/",
+                human_interventions=len(self.interventions),
             ),
             target=TargetSurface(
                 surface_type="legacy_web",

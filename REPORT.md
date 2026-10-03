@@ -206,40 +206,64 @@ per tenant and flagging the artifact for re-review.
 
 ## 5. Escalation & handoff
 
-Detection: any step with `requires_confirmation=True` (in practice, an
-irreversible click discovery observed triggering a real confirmation
-dialog) is never auto-executed unless the run was explicitly invoked with
-`--auto-approve`. That flag means "the review that approved this artifact
-stands as the confirmation for its risky step", so the engine refuses it
-for a `draft`: an unreviewed artifact can never skip the human (see
-`guardrails/risk_policy.py`).
+**Four ways a run reaches a human**, all through one mechanism:
 
-**The handoff is real, not mocked.** Replay launches Chromium with
-`--remote-debugging-port` open from the start. On hitting an escalation
-point it writes an `intervention_request` (reason, step, screenshot, the
-CDP endpoint) to a small file-backed `ControlChannel`
-(`escalation/control_channel.py`) and blocks, polling that file. A human
-— or, for repeatable graded evidence,
-`escalation/simulated_operator.py` — reattaches via
-`playwright.chromium.connect_over_cdp(...)` from a **separate process/
-connection** and drives the exact same live page (verified while building
-this: a second Playwright connection sees and can act on the first one's
-page, and the action is visible back on the original page handle). Only
-the operator's *decision* is scripted for evidence purposes; the
-reattachment and control transfer are the real mechanism, and
-`escalation/operator_console.py` is the bare mock UI a real person would
-use (with `chrome://inspect` pointed at the same CDP endpoint to actually
-drive the page, not just record what they did).
+| Trigger | Where | Detected by |
+|---|---|---|
+| The model can't safely proceed (a decision it isn't authorised to make, a control it can't find) | discovery | the model calls `request_human(reason)` |
+| The model is stuck without saying so | discovery | the harness: the same tool call 3 times running, or 3 failed calls in a row |
+| A step needs a person: an irreversible click, or a value only a human supplied | replay | the artifact (`requires_confirmation`), unless the approved artifact is run with `--auto-approve` (refused for a draft, §2) |
+| A step failed and replay can't recover | replay | opt-in, `--escalate-on-failure`. Off by default: an unattended production call should return `FAILURE` promptly, not block on a person |
 
-On resume, replay skips the step(s) the human just performed and continues
-from whatever comes next, then verifies the checkpoint like any other run
-— it doesn't just trust that the handoff worked.
+An operator can also take the wheel uninvited (`takeover`), give up on a
+pending request (`cancel`), or stop the run (`interrupt`), at any step or
+turn boundary. `finish_stuck` stays terminal: "no such member" is a dead
+end a human can't fix either, so it doesn't page one.
 
-**What's scoped out, deliberately:** a live co-browsing view (the brief
-excludes this explicitly) and a `retry_step`-style re-attempt if the human
-declines rather than performs the action — right now "resume" always means
-"proceed," which is the simplification I'd remove first with more time
-(§7).
+**The intervention request** carries what the operator needs to act:
+capability, goal, the step or turn, why it stopped, the current URL, a
+screenshot, and the CDP endpoint to attach to.
+
+**Control transfer.** Both discovery and replay launch Chromium with a
+remote-debugging port open from the start, so the session a human attaches
+to is the one automation was driving, not a fresh one. The run writes the
+request to the `ControlTransport` and from that moment until
+`wait_for_resume()` returns, the human owns the session: automation makes
+no page call, it only idles. Who is in control is one field
+(`status`: `automation` / `paused_for_human` / `human_active` /
+`resume_requested`) that both sides and the console read. The operator,
+or `escalation/simulated_operator.py` for repeatable evidence, attaches
+with `connect_over_cdp` from a separate process and drives the same page.
+
+**What the human did is observed, not self-reported**
+(`escalation/recorder.py`). A script injected into every document reports
+the operator's clicks and field edits through a Playwright binding;
+navigations and dialogs come from page events. Recording is on only while
+the human holds control. In replay the observed actions go into the result
+(`escalation.human_actions`) and the log. In discovery they also become
+artifact steps marked `origin: "human"`, with the same locator inference
+the model's actions get, so a flow that needed a person is still recorded
+end to end and replays. A value the human typed is bound to an input param
+if it matches one; otherwise it is never written down, and that step is
+flagged so replay hands it to a human rather than inventing a value.
+
+**Handing back.** The operator says what happened to the paused step:
+"I completed it" (automation continues from the next step) or "run it
+yourself" (automation executes it). Unstated, the default follows the
+kind of request. Either way the run then verifies the checkpoint and the
+declared outputs like any other; it doesn't trust that the handoff worked.
+A failed step is escalated once: if it still fails after the handoff, that
+is a hard failure.
+
+**What's mocked:** the operator console is a bare Flask page, and a real
+person drives the page through `chrome://inspect` (or the headed window)
+rather than an embedded live view, which the brief scopes out. The scripted
+operator stands in for a person's decisions only. **Limits:** the recorder
+sees clicks and field changes, not free keyboard navigation or drag
+gestures; the file-backed transport assumes the operator's console shares
+a filesystem with the run (an HTTP transport is one new `ControlTransport`
+subclass); one fixed CDP port per run means one escalatable run per host
+at a time.
 
 ## 6. Safety
 

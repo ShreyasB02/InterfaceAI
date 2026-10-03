@@ -31,6 +31,7 @@ import os
 from pathlib import Path
 
 from flask import Flask, redirect, request, send_from_directory
+from markupsafe import escape
 
 from escalation.control_channel import ControlChannel
 
@@ -51,9 +52,12 @@ PAGE = """<!doctype html>
 
 PENDING = """
 <table border="1" cellpadding="6" cellspacing="0">
-  <tr><td>Reason</td><td>{reason}</td></tr>
-  <tr><td>Step</td><td>{step_id}</td></tr>
+  <tr><td>Why it stopped</td><td>{reason}</td></tr>
+  <tr><td>Kind</td><td>{kind}</td></tr>
   <tr><td>Capability</td><td>{capability}</td></tr>
+  <tr><td>Goal</td><td>{goal}</td></tr>
+  <tr><td>Step</td><td>{step_id}</td></tr>
+  <tr><td>Page</td><td>{current_url}</td></tr>
   <tr><td>CDP endpoint</td><td>{cdp_endpoint}</td></tr>
 </table>
 <p><img src="/console/screenshot?run_dir={run_dir}" width="640"></p>
@@ -62,9 +66,11 @@ add the CDP endpoint above under "Discover network targets", then click "inspect
 page listed there.</p>
 <form method="post" action="/console/resume">
   <input type="hidden" name="run_dir" value="{run_dir}">
-  <label>What did you do? (recorded on the run's evidence)</label><br>
-  <textarea name="actions_taken" rows="3" cols="60"></textarea><br>
-  <button type="submit">Resume Automation</button>
+  <p style="color:#666;">Your clicks and field edits on the live page are recorded automatically.
+  The note below is optional context.</p>
+  <textarea name="actions_taken" rows="3" cols="60" placeholder="Optional note"></textarea><br>
+  <button type="submit" name="step_done" value="yes">Hand back — I completed this step</button>
+  <button type="submit" name="step_done" value="no">Hand back — automation should run this step</button>
 </form>
 <form method="post" action="/console/cancel">
   <input type="hidden" name="run_dir" value="{run_dir}">
@@ -91,7 +97,8 @@ def console():
     req = state.get("intervention_request")
     body = IDLE.format(run_dir=str(run_dir))
     if req and state.get("status") in ("paused_for_human", "human_active"):
-        body = PENDING.format(run_dir=str(run_dir), **req)
+        fields = {"kind": "risk_confirmation", "goal": "", "current_url": "", **req}
+        body = PENDING.format(run_dir=str(run_dir), **{k: escape(str(v)) for k, v in fields.items()})
     signal = state.get("signal")
     signal_note = f" (pending signal: {signal['type']})" if signal else ""
     return PAGE.format(run_id=run_dir.name, status=state.get("status"), signal_note=signal_note,
@@ -117,7 +124,7 @@ def resume():
     actions = request.form.get("actions_taken", "").strip()
     if actions:
         control.record_human_action(actions)
-    control.signal_resume()
+    control.signal_resume(step_done=request.form.get("step_done") == "yes")
     return redirect(f"/console?run_dir={run_dir}")
 
 

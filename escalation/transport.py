@@ -71,7 +71,7 @@ specific to the file-based one:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Callable, Optional
 
 
 class InterventionTimedOut(Exception):
@@ -101,6 +101,16 @@ class RunInterrupted(BaseException):
         self.reason = reason
 
 
+class InterventionKind:
+    """Why a human is being brought in. Sets the default for what happens to
+    the paused step on resume (see ControlTransport.signal_resume)."""
+
+    RISK_CONFIRMATION = "risk_confirmation"  # an irreversible step needs a person to decide
+    STUCK = "stuck"                          # discovery can't safely proceed
+    FAILURE = "failure"                      # a replay step failed and can't recover
+    TAKEOVER = "takeover"                    # the operator asked for the wheel
+
+
 class ControlSignal:
     """The three signal types a transport can carry independently of the
     pause/resume handshake below (Tier 2 #7). A signal can be set at any
@@ -123,28 +133,42 @@ class ControlTransport(ABC):
     @abstractmethod
     def request_intervention(self, *, reason: str, step_id: str, capability: str,
                               screenshot_path: str, cdp_endpoint: Optional[str],
-                              intervention_request_id: str) -> None:
-        """Signal that the run has stopped and is waiting for a human."""
+                              intervention_request_id: str,
+                              kind: str = InterventionKind.RISK_CONFIRMATION,
+                              goal: Optional[str] = None, current_url: Optional[str] = None) -> None:
+        """Signal that the run has stopped and is waiting for a human. Carries
+        what the operator needs to act: which capability and goal, which step,
+        why it stopped, where the page is, a screenshot, and how to attach."""
 
     @abstractmethod
     def mark_human_active(self) -> None:
         """An operator has attached and is now in control of the session."""
 
     @abstractmethod
-    def record_human_action(self, description: str) -> None:
-        """Append a human-readable record of what the operator did, for
-        the run's evidence trail."""
+    def record_human_action(self, description: str, source: str = "operator_note",
+                             detail: Optional[dict] = None) -> None:
+        """Append a record of what the operator did, for the run's evidence
+        trail. `source` is "observed" for actions captured off the live page
+        (escalation/recorder.py) and "operator_note" for the operator's own
+        free-text account."""
 
     @abstractmethod
-    def signal_resume(self) -> None:
-        """The operator is done; automation may proceed."""
+    def signal_resume(self, step_done: Optional[bool] = None) -> None:
+        """The operator is done; automation may proceed. `step_done` says
+        what happened to the step automation was paused on: True, the
+        operator performed it (automation continues from the next step);
+        False, they did not (automation runs it itself). None leaves it to
+        the default for the intervention's kind."""
 
     @abstractmethod
-    def wait_for_resume(self, poll_interval_s: float = 0.5,
-                         timeout_s: Optional[float] = None) -> list[dict]:
+    def wait_for_resume(self, poll_interval_s: float = 0.5, timeout_s: Optional[float] = None,
+                         idle: Optional[Callable[[float], None]] = None) -> dict:
         """Block until signal_resume() is called, or until a cancel/
-        interrupt signal arrives, or until timeout_s elapses. Returns the
-        recorded human_actions on a normal resume. Raises
+        interrupt signal arrives, or until timeout_s elapses. On a normal
+        resume returns {"human_actions": [...recorded since this
+        intervention was requested...], "step_done": bool | None}. `idle`
+        replaces time.sleep between polls, so the waiting side can keep
+        servicing its browser connection (see escalation/recorder.py). Raises
         InterventionTimedOut on timeout, EscalationAbandoned on cancel, or
         RunInterrupted on interrupt."""
 

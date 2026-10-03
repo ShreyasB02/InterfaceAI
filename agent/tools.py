@@ -94,8 +94,27 @@ TOOLS = [
         },
     },
     {
+        "name": "request_human",
+        "description": (
+            "Hand this same live session to a human operator when you cannot safely proceed but a "
+            "person could: a decision you are not authorized to make, a control you cannot find, an "
+            "unexpected screen. The run pauses, the operator acts on the page, then control returns "
+            "to you with a description of what they did and the new page state."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "description": "Why you are stopping and what you need the human to do."},
+            },
+            "required": ["reason"],
+        },
+    },
+    {
         "name": "finish_stuck",
-        "description": "Declare that you cannot safely or successfully complete the goal. Ends the run without an artifact.",
+        "description": (
+            "Declare a dead end that a human operator could not fix either (e.g. the page reports the "
+            "record does not exist). Ends the run without an artifact."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {

@@ -38,7 +38,14 @@ from artifacts.schema import (
 )
 from artifacts.validate import validate_required_params
 from escalation.control_channel import ControlChannel
-from escalation.transport import ControlSignal, EscalationAbandoned, InterventionTimedOut, RunInterrupted
+from escalation.recorder import HumanActionRecorder
+from escalation.transport import (
+    ControlSignal,
+    EscalationAbandoned,
+    InterventionKind,
+    InterventionTimedOut,
+    RunInterrupted,
+)
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.redaction import redact_dict, redact_text
 from guardrails.risk_policy import needs_escalation, replay_refusal
@@ -80,6 +87,7 @@ class ReplayExecutor:
         self._pending_dialog_action: Optional[str] = None
         self._pending_dialog_message: Optional[str] = None
         self._escalation_in_progress = False
+        self.recorder = HumanActionRecorder()
 
     # -- logging / evidence ----------------------------------------------
 
@@ -181,7 +189,9 @@ class ReplayExecutor:
         if self._escalation_in_progress:
             # A human (or the simulated operator, via a separate CDP
             # connection) is in control of this session right now and has
-            # their own dialog listener attached. Don't race them.
+            # their own dialog listener attached. Don't race them — just
+            # note that it appeared, as part of what happened on their watch.
+            self.recorder.note_dialog(dialog.message)
             return
         self._pending_dialog_message = dialog.message
         action = self._pending_dialog_action or "dismiss"
@@ -204,8 +214,14 @@ class ReplayExecutor:
             page.goto(self._base_url.rstrip("/") + "/" + self._resolve_nav_path(step, params).lstrip("/"))
             self.allowlist.check_url(page.url)
         elif step.action == ActionType.FILL:
+            value = self._resolve_value(step, params)
+            if value is None:
+                # A value a human typed during discovery that isn't a declared
+                # param is never stored. Such a step is handed to a human.
+                raise StepAssertionFailed("a value for this fill step",
+                                          "the artifact records none (it was entered by a human during discovery)")
             resolved = resolve(page, step.target, timeout_ms=step.timeout_ms)
-            resolved.locator.fill(str(self._resolve_value(step, params)))
+            resolved.locator.fill(str(value))
         elif step.action == ActionType.CLICK:
             resolved = resolve(page, step.target, timeout_ms=step.timeout_ms)
             resolved.locator.click()
@@ -244,6 +260,83 @@ class ReplayExecutor:
 
     # -- main entry point ----------------------------------------------------
 
+    def _handoff(self, page, control: ControlChannel, step: Step, *, kind: str, reason: str,
+                 params: dict, on_escalation, timeout_s: Optional[float]) -> dict:
+        """Pause, cede the live session to a human, and wait to get it back.
+
+        Control-transfer model: from request_intervention() until
+        wait_for_resume() returns, the human owns the session. Automation
+        performs no page action in that window — it only idles, receiving
+        the recorder's observations of what the human does. Ownership is
+        the control channel's `status` field, readable by anyone.
+
+        Returns {"status": "resumed" | "timed_out" | "cancelled",
+                 "detail": <EscalationDetail fields>, "step_done": bool | None,
+                 "error": str | None}.
+        """
+        shot = self._screenshot(page, f"pre_escalation_{step.step_id}")
+        req_id = str(uuid.uuid4())
+        control.request_intervention(
+            reason=reason, step_id=step.step_id, capability=self.artifact.name,
+            screenshot_path=shot, cdp_endpoint=f"http://127.0.0.1:{self.cdp_port}",
+            intervention_request_id=req_id, kind=kind,
+            goal=self.artifact.description, current_url=self._safe_url(page),
+        )
+        self._log({"event": "escalation_requested", "step_id": step.step_id, "request_id": req_id,
+                   "kind": kind, "reason": reason, "screenshot": shot})
+
+        status, error, resume = "resumed", None, {}
+        self._escalation_in_progress = True
+        self.recorder.start()
+        try:
+            if on_escalation:
+                on_escalation(control, {"step_id": step.step_id, "run_dir": str(self.evidence_dir), "kind": kind})
+            resume = control.wait_for_resume(timeout_s=timeout_s, idle=self.recorder.pump)
+        except InterventionTimedOut as e:
+            status, error = "timed_out", str(e)
+        except EscalationAbandoned as e:
+            status, error = "cancelled", str(e)
+        finally:
+            # Also runs when RunInterrupted propagates: control is taken
+            # back and recording stops whichever way the wait ended.
+            observed = self.recorder.stop()
+            self._escalation_in_progress = False
+
+        observed_evidence = [a.to_evidence(params) for a in observed]
+        for entry in observed_evidence:
+            control.record_human_action(entry["description"], source="observed",
+                                        detail={k: v for k, v in entry.items()
+                                                if k not in ("at", "source", "description")})
+        human_actions = observed_evidence + resume.get("human_actions", [])
+        step_done = resume.get("step_done")
+        self._log({"event": f"escalation_{status}", "step_id": step.step_id, "request_id": req_id,
+                   "step_done": step_done, "human_actions": human_actions,
+                   "screenshot": self._screenshot(page, f"post_escalation_{step.step_id}")})
+        return {"status": status, "error": error, "step_done": step_done,
+                "detail": {"reason": reason, "step_id": step.step_id, "intervention_request_id": req_id,
+                           "kind": kind, "resolution": status, "human_actions": human_actions}}
+
+    @staticmethod
+    def _skip_step(steps: list[Step], i: int) -> int:
+        """Index after step i, also passing the HANDLE_DIALOG paired with it:
+        the human who performed the step dealt with its dialog too."""
+        i += 1
+        if i < len(steps) and steps[i].action == ActionType.HANDLE_DIALOG:
+            i += 1
+        return i
+
+    @staticmethod
+    def _handoff_ended(handoff: dict, step: Step) -> Optional[tuple]:
+        """(outcome, failure) if the handoff ended the run, else None."""
+        if handoff["status"] == "timed_out":
+            return ReplayOutcome.ESCALATED, None
+        if handoff["status"] == "cancelled":
+            return ReplayOutcome.FAILURE, {
+                "step_id": step.step_id, "expected": "a human to resolve the intervention",
+                "observed": "the pending escalation was cancelled by an operator",
+                "message": handoff["error"]}
+        return None
+
     def _preflight_result(self, outcome: ReplayOutcome, started_at: datetime, expected: str,
                           observed: str) -> ReplayResult:
         """A run that is turned away before the browser opens. Still leaves
@@ -261,7 +354,7 @@ class ReplayExecutor:
         return result
 
     def run(self, params: dict, base_url: Optional[str] = None, auto_approve: bool = False,
-            attended: bool = False,
+            attended: bool = False, escalate_on_failure: bool = False,
             escalation_timeout_s: Optional[float] = None,
             on_escalation: Optional[Callable[[ControlChannel, dict], None]] = None) -> ReplayResult:
         started_at = datetime.now(timezone.utc)
@@ -300,6 +393,8 @@ class ReplayExecutor:
             browser = pw.chromium.launch(headless=self.headless, args=[f"--remote-debugging-port={self.cdp_port}"])
             page = browser.new_page()
             page.on("dialog", self._on_dialog)
+            self.recorder.install(page)
+            escalated_failures: set[str] = set()
 
             try:
                 # Inside the try on purpose: a failed/slow login is a hard
@@ -354,76 +449,41 @@ class ReplayExecutor:
                             outcome = ReplayOutcome.FAILURE
                             break
 
-                    # Tier 2 #7: a manual takeover request stands in for the
-                    # guardrail-driven `needs_escalation` check below — an
-                    # operator can grab the wheel on ANY step, not only a
-                    # CLICK the artifact flagged risky.
+                    # Two reasons to hand this step to a human before running
+                    # it: the artifact says it needs one (an irreversible
+                    # click, or a value only a human supplied), or an
+                    # operator asked for the wheel — which they can do on ANY
+                    # step, not only one flagged risky.
                     manual_takeover = bool(sig) and sig.get("type") == ControlSignal.TAKEOVER
-                    risky_click = step.action == ActionType.CLICK and needs_escalation(step, auto_approve)
+                    needs_human = (step.action in (ActionType.CLICK, ActionType.FILL)
+                                   and needs_escalation(step, auto_approve))
 
-                    if manual_takeover or risky_click:
+                    if manual_takeover or needs_human:
                         control.clear_signal()  # no-op if no signal was pending
-                        shot = self._screenshot(page, f"pre_escalation_{step.step_id}")
-                        req_id = str(uuid.uuid4())
-                        if manual_takeover and not risky_click:
-                            reason = sig.get("reason") or "Operator requested manual takeover."
+                        if needs_human:
+                            kind = InterventionKind.RISK_CONFIRMATION
+                            reason = (f"Step {step.step_id} ({step.intent}) is {step.risk_level.value} and "
+                                      "requires a human before proceeding.")
                         else:
-                            reason = (f"Step {step.step_id} ({step.intent}) is irreversible and requires "
-                                      "human confirmation before proceeding.")
-                        control.request_intervention(
-                            reason=reason, step_id=step.step_id, capability=self.artifact.name,
-                            screenshot_path=shot, cdp_endpoint=f"http://127.0.0.1:{self.cdp_port}",
-                            intervention_request_id=req_id,
-                        )
-                        self._log({"event": "escalation_requested", "step_id": step.step_id,
-                                    "request_id": req_id, "manual_takeover": manual_takeover})
-
-                        self._escalation_in_progress = True
-                        if on_escalation:
-                            on_escalation(control, {"step_id": step.step_id, "run_dir": str(self.evidence_dir)})
-
-                        try:
-                            human_actions = control.wait_for_resume(timeout_s=escalation_timeout_s)
-                        except InterventionTimedOut:
-                            outcome = ReplayOutcome.ESCALATED
-                            escalation = {"reason": "Timed out waiting for a human to resolve the "
-                                          "intervention.", "step_id": step.step_id,
-                                          "intervention_request_id": req_id}
+                            kind = InterventionKind.TAKEOVER
+                            reason = sig.get("reason") or "Operator requested manual takeover."
+                        handoff = self._handoff(page, control, step, kind=kind, reason=reason, params=params,
+                                                on_escalation=on_escalation, timeout_s=escalation_timeout_s)
+                        escalation = handoff["detail"]
+                        ended = self._handoff_ended(handoff, step)
+                        if ended:
+                            outcome, failure = ended
                             break
-                        except EscalationAbandoned as e:
-                            # Tier 2 #7's "cancel": an operator explicitly gave
-                            # up on this pending intervention rather than
-                            # leaving it to hang forever or wait out a
-                            # timeout. Reported as a controlled FAILURE, not
-                            # a hang and not a silent retry.
-                            outcome = ReplayOutcome.FAILURE
-                            failure = {"step_id": step.step_id, "expected": "a human to resolve the intervention",
-                                       "observed": "the pending escalation was cancelled by an operator",
-                                       "message": str(e)}
-                            self._log({"event": "escalation_cancelled", "step_id": step.step_id, "detail": str(e)})
-                            break
-                        finally:
-                            self._escalation_in_progress = False
 
-                        escalation = {"reason": reason, "step_id": step.step_id, "intervention_request_id": req_id}
-                        self._log({"event": "escalation_resumed", "human_actions": human_actions})
-
-                        if risky_click:
-                            # The human performed the click (and any dialog)
-                            # themselves on the live session. Skip this step
-                            # and its paired HANDLE_DIALOG step; continue from
-                            # whatever comes next.
-                            i += 1
-                            if i < len(steps) and steps[i].action == ActionType.HANDLE_DIALOG:
-                                i += 1
+                        # Did the human perform the paused step? Their answer
+                        # if they gave one; otherwise yes for a step that was
+                        # theirs to do, no for a look-around takeover.
+                        step_done = handoff["step_done"] if handoff["step_done"] is not None else needs_human
+                        if step_done:
+                            i = self._skip_step(steps, i)
                             last_step_id = step.step_id
                             steps_executed += 1
                             continue
-
-                        # Manual takeover on a step automation still owns:
-                        # the operator handed control back rather than
-                        # performing the step itself, so fall through and
-                        # let automation execute this same step now.
 
                     # Pre-register dialog handling if the NEXT step says how
                     # to handle a dialog this click is expected to trigger.
@@ -432,7 +492,35 @@ class ReplayExecutor:
                     if step.action == ActionType.CLICK and i + 1 < len(steps) and steps[i + 1].action == ActionType.HANDLE_DIALOG:
                         self._pending_dialog_action = steps[i + 1].on_dialog
 
-                    resolved = self._execute_step(page, step, params, outputs)
+                    try:
+                        resolved = self._execute_step(page, step, params, outputs)
+                    except (LocatorResolutionError, StepAssertionFailed, PlaywrightError) as e:
+                        # Opt-in: instead of failing, bring a human to the
+                        # live session at the point of failure. Once per
+                        # step — if it fails again after the handoff, that
+                        # is a hard failure (handled below, as before).
+                        if not escalate_on_failure or step.step_id in escalated_failures:
+                            raise
+                        escalated_failures.add(step.step_id)
+                        reason = (f"Step {step.step_id} ({step.intent}) failed and replay cannot recover "
+                                  f"on its own: {str(e).splitlines()[0][:300]}")
+                        self._log({"event": "step_failed_escalating", "step_id": step.step_id, "error": reason})
+                        handoff = self._handoff(page, control, step, kind=InterventionKind.FAILURE, reason=reason,
+                                                params=params, on_escalation=on_escalation,
+                                                timeout_s=escalation_timeout_s)
+                        escalation = handoff["detail"]
+                        ended = self._handoff_ended(handoff, step)
+                        if ended:
+                            outcome, failure = ended
+                            break
+                        if handoff["step_done"]:
+                            i = self._skip_step(steps, i)
+                            last_step_id = step.step_id
+                            steps_executed += 1
+                        # Otherwise the human cleared the obstacle and handed
+                        # the step back: loop round and run it again.
+                        continue
+
                     event = {"event": "step_executed", "step_id": step.step_id,
                              "action": step.action.value, "intent": step.intent}
                     if resolved is not None:

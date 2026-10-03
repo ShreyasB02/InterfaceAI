@@ -115,6 +115,10 @@ def test_escalation_resolved_by_simulated_operator():
     assert result.outcome == ReplayOutcome.SUCCESS, result.model_dump()
     assert result.escalation is not None, "expected escalation to be recorded even though it resolved"
     assert result.escalation.step_id == "s9"
+    # What the human did is observed off the live page, not self-reported.
+    observed = [a for a in result.escalation.human_actions if a["source"] == "observed"]
+    assert any(a["kind"] == "click" and a.get("text") == "Confirm & Open Account" for a in observed), observed
+    assert any(a["kind"] == "dialog" for a in observed), observed
     assert result.outputs["new_account_number"].startswith("SUB-10001-")
     print("PASS: escalation resolved by simulated operator ->", result.outcome, result.escalation, result.outputs)
 
@@ -289,6 +293,53 @@ def test_assert_text_step():
     print("PASS: assert_text step ->", ok.outcome, "/", bad.outcome, bad.failure.observed[:60])
 
 
+def _break_search_step(artifact):
+    step = artifact.steps[2]  # the Search click
+    step.timeout_ms = 500
+    step.target = LocatorSpec(strategies=[LocatorStrategy(
+        method=LocatorMethod.ROLE, value="button", role_name="No Such Button", reasoning="test: cannot resolve")])
+    return approve(artifact, "test"), step
+
+
+def test_failure_escalates_and_human_completes_the_step():
+    """With escalate_on_failure, a step replay can't perform is handed to a
+    human on the same live session. They do it, say so, and automation
+    carries on from the next step and still verifies the checkpoint."""
+    artifact, step = _break_search_step(build_lookup_member_balance_fixture())
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+
+    def on_escalation(control, ctx):
+        assert ctx["kind"] == "failure", ctx
+        threading.Thread(target=simulate_operator_takeover, args=(control,),
+                         kwargs={"actions": [("click", "Search")], "step_done": True,
+                                 "reaction_delay_s": 0.3}, daemon=True).start()
+
+    result = ex.run({"member_id": "10001"}, escalate_on_failure=True, on_escalation=on_escalation)
+    assert result.outcome == ReplayOutcome.SUCCESS, result.model_dump()
+    assert result.outputs["savings_balance"] == 8150.32, result.outputs
+    assert result.escalation.kind == "failure" and result.escalation.step_id == step.step_id
+    assert "No Such Button" in result.escalation.reason, result.escalation.reason
+    observed = [a["description"] for a in result.escalation.human_actions if a["source"] == "observed"]
+    assert "Clicked 'Search' button" in observed, observed
+    print("PASS: failed step escalated, human completed it ->", result.outcome, observed)
+
+
+def test_failure_escalation_handed_back_unfixed_is_hard_failure():
+    """If the human hands the step back and it still can't run, that is a
+    hard failure — the step is escalated once, not in a loop."""
+    artifact, step = _break_search_step(build_lookup_member_balance_fixture())
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+
+    def on_escalation(control, ctx):
+        threading.Thread(target=simulate_operator_takeover, args=(control,),
+                         kwargs={"step_done": False, "reaction_delay_s": 0.3}, daemon=True).start()
+
+    result = ex.run({"member_id": "10001"}, escalate_on_failure=True, on_escalation=on_escalation)
+    assert result.outcome == ReplayOutcome.FAILURE, result.model_dump()
+    assert result.failure.step_id == step.step_id and result.escalation.kind == "failure"
+    print("PASS: handed back unfixed -> hard FAILURE ->", result.failure.step_id)
+
+
 def _as_draft(artifact):
     artifact.status = ArtifactStatus.DRAFT
     artifact.review = None
@@ -351,6 +402,8 @@ if __name__ == "__main__":
     test_missing_declared_output_is_failure()
     test_locator_fallback_is_reported()
     test_assert_text_step()
+    test_failure_escalates_and_human_completes_the_step()
+    test_failure_escalation_handed_back_unfixed_is_hard_failure()
     test_draft_is_refused_unattended_and_runs_attended()
     test_draft_cannot_auto_approve_irreversible_step()
     test_edit_after_approval_voids_it()

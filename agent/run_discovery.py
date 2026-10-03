@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,6 +24,8 @@ from dotenv import load_dotenv
 from agent.discovery_loop import DiscoveryFailed, DiscoveryRun
 from agent.llm import LLMClient, LLMConfigError
 from artifacts import repository
+from escalation.simulated_operator import parse_action, simulate_operator_takeover
+from escalation.transport import RunInterrupted
 from guardrails.allowlist import AllowlistViolation
 
 load_dotenv()
@@ -62,6 +65,14 @@ def main():
                               "turn (see agent/llm/). Needs a vision-capable model. Vision is on by "
                               "default.")
     parser.add_argument("--evidence-root", default="evidence/discovery")
+    parser.add_argument("--escalation-timeout", type=float, default=600,
+                         help="Seconds to wait for a human when the run escalates (the model calls "
+                              "request_human, or the harness sees it stuck) before giving up. Resolve it "
+                              "from the operator console: python -m escalation.operator_console.")
+    parser.add_argument("--simulate-operator", action="append", default=None, metavar="ACTION",
+                         help="If the run escalates, reattach via CDP and perform this action on the same "
+                              "live session: 'click:<label>' or 'fill:<field name>=<value>'. Repeatable. "
+                              "For repeatable evidence without a human physically present.")
     args = parser.parse_args()
 
     params = dict(args.params)
@@ -75,6 +86,18 @@ def main():
         print(f"LLM configuration error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    on_escalation = None
+    if args.simulate_operator:
+        try:
+            operator_actions = [parse_action(a) for a in args.simulate_operator]
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
+
+        def on_escalation(control, ctx):  # noqa: ANN001
+            threading.Thread(target=simulate_operator_takeover, args=(control,),
+                             kwargs={"actions": operator_actions}, daemon=True).start()
+
     run = DiscoveryRun(
         capability_name=args.capability_name,
         goal=args.goal,
@@ -87,6 +110,8 @@ def main():
         headless=not args.headed,
         vision=not args.no_vision,
         llm=llm,
+        escalation_timeout_s=args.escalation_timeout,
+        on_escalation=on_escalation,
         # Re-discovering an existing capability records the next major
         # version; earlier versions stay in the store.
         artifact_version=repository.next_major_version(args.capability_name),
@@ -101,6 +126,10 @@ def main():
         artifact = run.run()
     except DiscoveryFailed as e:
         print(f"\nDiscovery run did not complete: {e.reason}", file=sys.stderr)
+        print(f"Partial evidence is at {run.evidence_dir}", file=sys.stderr)
+        sys.exit(1)
+    except RunInterrupted as e:
+        print(f"\nDiscovery run was stopped by an operator: {e.reason}", file=sys.stderr)
         print(f"Partial evidence is at {run.evidence_dir}", file=sys.stderr)
         sys.exit(1)
     except AllowlistViolation as e:
@@ -125,7 +154,9 @@ def main():
     print(f"\nSuccess. Artifact v{artifact.version} saved to {path} as a DRAFT.")
     print(f"Review it:  python -m artifacts.review show {artifact.name}")
     print(f"Approve it: python -m artifacts.review approve {artifact.name} --reviewer <you>")
-    print(f"Steps recorded: {len(artifact.steps)}")
+    print(f"Steps recorded: {len(artifact.steps)}"
+          + (f" ({sum(s.origin == 'human' for s in artifact.steps)} performed by a human operator)"
+             if run.interventions else ""))
     print(f"Evidence: {run.evidence_dir}")
 
 

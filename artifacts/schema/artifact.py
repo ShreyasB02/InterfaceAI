@@ -108,6 +108,11 @@ class Step(BaseModel):
         default=None, description="'accept' or 'dismiss', for action == handle_dialog."
     )
     timeout_ms: int = 5000
+    origin: str = Field(
+        default="model",
+        description="'model' if the LLM performed this step during discovery, 'human' if an operator "
+        "did while holding the session after an escalation (recorded from what they actually did).",
+    )
     risk_level: RiskLevel = RiskLevel.SAFE
     requires_confirmation: bool = Field(
         default=False,
@@ -209,6 +214,11 @@ class DiscoveryProvenance(BaseModel):
     model_name: str
     recorded_at: datetime
     evidence_path: str = Field(description="Relative path under /evidence/ for the raw run.")
+    human_interventions: int = Field(
+        default=0,
+        description="How many times the discovery run handed the session to a human. Steps they "
+        "performed are marked origin='human'; the full record is in the run's evidence.",
+    )
 
 
 class TargetSurface(BaseModel):

@@ -31,6 +31,7 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import Dialog, Page, sync_playwright
 
+from escalation.recorder import HumanActionRecorder
 from guardrails.allowlist import Allowlist
 from guardrails.safety import safe_screenshot
 from agent.locator_inference import ElementMeta, derive_locator_strategies
@@ -97,7 +98,8 @@ class ActionRecord:
 
 
 class BrowserSurface:
-    def __init__(self, base_url: str, evidence_dir: Path, allowlist: Allowlist, headless: bool = True):
+    def __init__(self, base_url: str, evidence_dir: Path, allowlist: Allowlist, headless: bool = True,
+                 cdp_port: int = 9334):
         self.base_url = base_url.rstrip("/")
         self.evidence_dir = evidence_dir
         self.allowlist = allowlist
@@ -108,12 +110,19 @@ class BrowserSurface:
         self._shot_count = 0
         self._pending_dialog: Optional[Dialog] = None
         self._pending_dialog_action: Optional[str] = None
+        # The session is launched with a CDP port open from the start, so a
+        # human operator can attach to THIS browser if the run escalates.
+        self.cdp_endpoint = f"http://127.0.0.1:{cdp_port}"
+        self._cdp_port = cdp_port
+        self.recorder = HumanActionRecorder()
 
     def __enter__(self) -> "BrowserSurface":
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
+        self._browser = self._pw.chromium.launch(
+            headless=self.headless, args=[f"--remote-debugging-port={self._cdp_port}"])
         self.page = self._browser.new_page()
         self.page.on("dialog", self._on_dialog)
+        self.recorder.install(self.page)
         (self.evidence_dir / "screenshots").mkdir(parents=True, exist_ok=True)
         return self
 
@@ -129,6 +138,11 @@ class BrowserSurface:
         # action that opened it told us what to do, do it; otherwise the
         # safe default is dismiss (never silently accept an unplanned
         # irreversible confirmation).
+        if self.recorder.active:
+            # A human holds the session and their own connection resolves
+            # the dialog. Note that it appeared; don't race them for it.
+            self.recorder.note_dialog(dialog.message)
+            return
         self._pending_dialog = dialog
         action = self._pending_dialog_action or "dismiss"
         self._pending_dialog_action = action
@@ -141,6 +155,9 @@ class BrowserSurface:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             return path_or_url
         return urljoin(self.base_url + "/", path_or_url.lstrip("/"))
+
+    def screenshot(self, tag: str) -> str:
+        return self._screenshot(tag)
 
     def _screenshot(self, tag: str) -> str:
         self._shot_count += 1

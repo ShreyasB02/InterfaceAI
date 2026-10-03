@@ -69,13 +69,20 @@ def _summarize(artifact: CapabilityArtifact) -> str:
         f"{artifact.name} v{artifact.version}  [{artifact.status.value}]",
         f"  {artifact.description}",
         f"  recorded by {artifact.provenance.model_provider}/{artifact.provenance.model_name} "
-        f"in run {artifact.provenance.discovery_run_id}",
+        f"in run {artifact.provenance.discovery_run_id}"
+        + (f" ({artifact.provenance.human_interventions} human intervention(s))"
+           if artifact.provenance.human_interventions else ""),
         "  inputs:  " + (", ".join(f"{p.name}:{p.type.value}" for p in artifact.input_schema) or "(none)"),
         "  outputs: " + (", ".join(f"{o.name}:{o.type.value}" for o in artifact.output_schema) or "(none)"),
         "  steps:",
     ]
     for step in artifact.steps:
-        flag = f"  <-- {step.risk_level.value}, needs human confirmation" if step.requires_confirmation else ""
+        flags = []
+        if step.origin == "human":
+            flags.append("recorded from a human operator")
+        if step.requires_confirmation:
+            flags.append(f"{step.risk_level.value}, handed to a human at replay")
+        flag = f"  <-- {'; '.join(flags)}" if flags else ""
         lines.append(f"    {step.step_id:>4} {step.action.value:<13} {step.intent}{flag}")
     lines.append(f"  checkpoint: {artifact.checkpoint.method.value} {artifact.checkpoint.value!r}")
     lines.append("  known outcomes: " + (", ".join(o.code for o in artifact.known_outcomes) or "(none)"))

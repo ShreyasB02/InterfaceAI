@@ -110,6 +110,14 @@ class EscalationDetail(BaseModel):
     reason: str
     step_id: str
     intervention_request_id: str
+    kind: str = Field(default="risk_confirmation",
+                      description="risk_confirmation | failure | takeover (escalation/transport.py).")
+    resolution: Optional[str] = Field(
+        default=None, description="How the handoff ended: resumed | timed_out | cancelled.")
+    human_actions: list[dict] = Field(
+        default_factory=list,
+        description="What the operator did while in control. source='observed' entries were captured "
+                    "off the live page; source='operator_note' is the operator's own account.")
 
 
 class InterruptDetail(BaseModel):

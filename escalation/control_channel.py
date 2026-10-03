@@ -39,12 +39,13 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from escalation.transport import (
     ControlSignal,
     ControlTransport,
     EscalationAbandoned,
+    InterventionKind,
     InterventionTimedOut,
     RunInterrupted,
 )
@@ -89,14 +90,23 @@ class ControlChannel(ControlTransport):
 
     def request_intervention(self, *, reason: str, step_id: str, capability: str,
                               screenshot_path: str, cdp_endpoint: Optional[str],
-                              intervention_request_id: str) -> None:
+                              intervention_request_id: str,
+                              kind: str = InterventionKind.RISK_CONFIRMATION,
+                              goal: Optional[str] = None, current_url: Optional[str] = None) -> None:
         state = self._read()
         state["status"] = "paused_for_human"
+        state.pop("step_done", None)
         state["intervention_request"] = {
             "id": intervention_request_id,
+            "kind": kind,
             "reason": reason,
             "step_id": step_id,
             "capability": capability,
+            "goal": goal,
+            "current_url": current_url,
+            # human_actions is one list for the whole run; this marks where
+            # this intervention's entries begin.
+            "actions_from": len(state.get("human_actions", [])),
             "screenshot_path": screenshot_path,
             "cdp_endpoint": cdp_endpoint,
             "requested_at": datetime.now(timezone.utc).isoformat(),
@@ -108,21 +118,24 @@ class ControlChannel(ControlTransport):
         state["status"] = "human_active"
         self._write(state)
 
-    def record_human_action(self, description: str) -> None:
+    def record_human_action(self, description: str, source: str = "operator_note",
+                             detail: Optional[dict] = None) -> None:
         state = self._read()
-        state.setdefault("human_actions", []).append({
-            "at": datetime.now(timezone.utc).isoformat(),
-            "description": description,
-        })
+        entry = {"at": datetime.now(timezone.utc).isoformat(), "source": source, "description": description}
+        entry.update(detail or {})
+        state.setdefault("human_actions", []).append(entry)
         self._write(state)
 
-    def signal_resume(self) -> None:
+    def signal_resume(self, step_done: Optional[bool] = None) -> None:
         state = self._read()
         state["status"] = "resume_requested"
+        state["step_done"] = step_done
         self._write(state)
 
-    def wait_for_resume(self, poll_interval_s: float = 0.5, timeout_s: Optional[float] = None) -> list[dict]:
+    def wait_for_resume(self, poll_interval_s: float = 0.5, timeout_s: Optional[float] = None,
+                         idle: Optional[Callable[[float], None]] = None) -> dict:
         start = time.time()
+        idle = idle or time.sleep
         while True:
             state = self._read()
 
@@ -146,11 +159,13 @@ class ControlChannel(ControlTransport):
             if state.get("status") == "resume_requested":
                 state["status"] = "automation"
                 self._write(state)
-                return state.get("human_actions", [])
+                actions_from = (state.get("intervention_request") or {}).get("actions_from", 0)
+                return {"human_actions": state.get("human_actions", [])[actions_from:],
+                        "step_done": state.get("step_done")}
 
             if timeout_s is not None and (time.time() - start) > timeout_s:
                 raise InterventionTimedOut(f"No resume signal within {timeout_s}s for run {self.run_id}")
-            time.sleep(poll_interval_s)
+            idle(poll_interval_s)
 
     def status(self) -> dict:
         return self._read()
