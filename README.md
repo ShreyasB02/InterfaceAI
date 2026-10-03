@@ -20,7 +20,7 @@ Requires Python 3.11+.
 pip install -r requirements.txt
 python -m playwright install chromium
 
-cp .env.example .env    # then fill in ANTHROPIC_API_KEY for discovery runs
+cp .env.example .env    # then add at least one LLM provider key for discovery runs
 ```
 
 Start the target app (a separate terminal, or backgrounded — it needs to be
@@ -38,8 +38,29 @@ permission-restricted, `10004` shows a one-time session-expired interstitial,
 `10005` is artificially slow, and `99999` (or anything unseeded) doesn't exist.
 
 **Replay never needs an API key** — it's pure browser automation against the
-artifact's recorded steps. **Discovery does** — it's a real LLM tool-use loop
-(Anthropic API; see `.env.example`).
+artifact's recorded steps. **Discovery does** — it's a real LLM tool-use loop.
+
+### LLM providers
+
+Discovery is provider-agnostic (`agent/llm/`). Gemini is supported natively,
+and anything that speaks the OpenAI Chat Completions format works through one
+adapter: OpenRouter, OpenAI, Groq, or any other compatible endpoint
+(`LLM_BASE_URL`).
+
+Set one or more keys in `.env` and, optionally, an order:
+
+```bash
+LLM_PROVIDERS=openrouter,gemini
+OPENROUTER_API_KEY=...
+GEMINI_API_KEY=...
+```
+
+A rate limit, overload (503) or timeout is retried with backoff
+(`LLM_MAX_RETRIES`, default 3), then the run fails over to the next provider
+and carries on with the same conversation. Every retry and failover is
+written to the run's evidence log, and each `decide` event records which
+provider and model answered. The model must support tool calling; pass
+`--no-vision` if it can't take images.
 
 ## Demo path
 
@@ -75,12 +96,13 @@ demo.
 
 ### Running without live services
 
-Nothing here calls out to the internet except the Anthropic API during
+Nothing here calls out to the internet except the configured LLM provider during
 discovery. To exercise the whole harness with **no API key at all**,
 including the escalation/handoff mechanism:
 
 ```bash
 python3 tests/test_discovery_dry_run.py    # scripted stand-in for the LLM
+python3 tests/test_llm_providers.py         # provider adapters, retry and failover (no network)
 python3 tests/test_replay_scenarios.py     # replay never needs an LLM anyway
 ```
 

@@ -15,12 +15,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-# LLMClient() is constructed inside DiscoveryRun.__init__ before this test
-# swaps run.llm for ScriptedLLMClient below — genai.Client() validates that
-# an API key is *present* at construction time (unlike the old Anthropic
-# client, which only checked at call time), so a syntactically-plausible
-# fake key is still required even though no real call is ever made.
-os.environ.setdefault("GEMINI_API_KEY", "fake-key-for-dry-run-only")
 os.environ.setdefault("ALLOWLIST_DOMAINS", "127.0.0.1:5055")
 
 from agent.discovery_loop import DiscoveryRun  # noqa: E402
@@ -94,8 +88,8 @@ def main():
         ],
         evidence_root=evidence_root,
         headless=True,
+        llm=ScriptedLLMClient(SCRIPT),
     )
-    run.llm = ScriptedLLMClient(SCRIPT)
 
     artifact = run.run()
 

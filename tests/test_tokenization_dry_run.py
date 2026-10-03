@@ -18,7 +18,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-os.environ.setdefault("GEMINI_API_KEY", "fake-key-for-dry-run-only")
 os.environ.setdefault("ALLOWLIST_DOMAINS", "127.0.0.1:5055")
 
 from agent.discovery_loop import DiscoveryRun  # noqa: E402
@@ -72,6 +71,7 @@ def main():
         ],
         evidence_root=evidence_root,
         headless=True,
+        llm=ScriptedLLMClient([]),  # script is filled in below, once the token is known
     )
 
     # member_id ("10001") doesn't match any of tokenizer.py's VALUE_PATTERNS
@@ -99,8 +99,8 @@ def main():
             "checkpoint_description": "Member detail page is showing with the Savings row visible.",
         }, "Goal achieved."),
     ]
-    llm = ScriptedLLMClient(SCRIPT)
-    run.llm = llm
+    llm = run.llm
+    llm.script = list(SCRIPT)
 
     artifact = run.run()
 

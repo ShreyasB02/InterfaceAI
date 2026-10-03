@@ -21,6 +21,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from agent.discovery_loop import DiscoveryFailed, DiscoveryRun
+from agent.llm import LLMClient, LLMConfigError
 from artifacts import repository
 from guardrails.allowlist import AllowlistViolation
 
@@ -58,13 +59,21 @@ def main():
     parser.add_argument("--headed", action="store_true", help="Show the browser window instead of running headless.")
     parser.add_argument("--no-vision", action="store_true",
                          help="Text-only observation, no screenshot attached to the model's context each "
-                              "turn (see agent/llm_client.py's decide(image_bytes=...)). Vision is on by "
+                              "turn (see agent/llm/). Needs a vision-capable model. Vision is on by "
                               "default.")
     parser.add_argument("--evidence-root", default="evidence/discovery")
     args = parser.parse_args()
 
     params = dict(args.params)
     param_types = dict(args.param_types)
+
+    # Built before the run so a missing key or unknown provider name fails
+    # here with a clear message, before an evidence directory is created.
+    try:
+        llm = LLMClient.from_env()
+    except LLMConfigError as e:
+        print(f"LLM configuration error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     run = DiscoveryRun(
         capability_name=args.capability_name,
@@ -77,10 +86,12 @@ def main():
         evidence_root=Path(args.evidence_root),
         headless=not args.headed,
         vision=not args.no_vision,
+        llm=llm,
     )
 
     print(f"Starting discovery run {run.run_id}")
     print(f"  goal: {args.goal}")
+    print(f"  llm: {llm.describe()}")
     print(f"  evidence: {run.evidence_dir}")
 
     try:

@@ -51,7 +51,7 @@ from artifacts.schema import (
     TargetSurface,
 )
 from agent.browser_surface import ActionRecord, BrowserSurface
-from agent.llm_client import LLMClient
+from agent.llm import LLMClient
 from agent.locator_inference import derive_locator_strategies
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.redaction import redact_dict
@@ -168,7 +168,7 @@ class DiscoveryRun:
     def __init__(self, *, capability_name: str, goal: str, base_url: str, entry_path: str,
                  params: dict[str, str], outputs: list[dict], evidence_root: Path,
                  param_types: Optional[dict[str, str]] = None, headless: bool = True,
-                 vision: bool = True):
+                 vision: bool = True, llm=None):
         self.capability_name = capability_name
         self.goal = goal
         self.base_url = base_url
@@ -178,7 +178,7 @@ class DiscoveryRun:
         self.outputs = outputs
         self.headless = headless
         # Vision: attach a real screenshot to the model's context each turn
-        # (agent/llm_client.py), on top of the existing text/DOM-derived
+        # (agent/llm/), on top of the existing text/DOM-derived
         # observation. Kept togglable — a provider outage on the image
         # path, or a deliberate text-only comparison run, shouldn't require
         # code changes.
@@ -190,7 +190,12 @@ class DiscoveryRun:
         self._log_path = self.evidence_dir / "log.jsonl"
 
         self.allowlist = Allowlist.from_env()
-        self.llm = LLMClient()
+        # Any object with decide()/model works here; the default is the
+        # provider router built from env (agent/llm/router.py). Its retry
+        # and failover events go into this run's evidence log.
+        self.llm = llm or LLMClient.from_env()
+        if hasattr(self.llm, "on_event"):
+            self.llm.on_event = self._log
         # One tokenizer per run (Tier 2 #6) — see guardrails/tokenizer.py.
         # Its token map is purely in-memory and is discarded with this
         # object; nothing about it is ever written to evidence.
@@ -322,12 +327,11 @@ class DiscoveryRun:
                 try:
                     response = self.llm.decide(system_prompt, messages, image_bytes=latest_screenshot)
                 except Exception as e:
-                    # A raw provider-side error (rate limit, malformed
-                    # response, a schema the provider's API rejects — the
-                    # exact two failure modes hit live while wiring up this
-                    # provider) must not surface as a bare traceback here.
-                    # Turn it into the same clean, evidence-logged failure
-                    # path as every other way a run can fail to finish.
+                    # Reached only once the router has exhausted its
+                    # retries on every configured provider (agent/llm/
+                    # router.py). Still must not surface as a bare
+                    # traceback: turn it into the same clean, evidence-
+                    # logged failure as every other way a run can end.
                     self._log({"event": "llm_call_failed", "turn": self._turn, "error": str(e)})
                     raise DiscoveryFailed(f"LLM call failed: {type(e).__name__}: {e}", self.run_id) from e
 
@@ -338,6 +342,8 @@ class DiscoveryRun:
 
                 self._log({
                     "event": "decide", "turn": self._turn,
+                    "provider": getattr(response, "provider", None),
+                    "model": getattr(response, "model", None) or self.llm.model,
                     "assistant_text": assistant_text,
                     "tool_name": tool_use.name if tool_use else None,
                     "tool_input": tool_use.input if tool_use else None,
@@ -475,7 +481,7 @@ class DiscoveryRun:
             provenance=DiscoveryProvenance(
                 goal=self.goal,
                 discovery_run_id=self.run_id,
-                model_provider="gemini",
+                model_provider=getattr(self.llm, "provider", "unknown"),
                 model_name=self.llm.model,
                 recorded_at=datetime.now(timezone.utc),
                 evidence_path=f"evidence/discovery/{self.run_id}/",
