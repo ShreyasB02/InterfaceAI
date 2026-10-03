@@ -19,11 +19,10 @@ Design choices worth flagging (expanded in /REPORT.md):
     dialog — risk classification comes from what actually happened, not a
     guess made after the fact.
   - known_outcomes / recoverable_patterns are intentionally NOT populated
-    from a single discovery run: a successful run, by definition, didn't
-    hit them. They're added as a deliberate second authoring pass (see
-    agent/augment_artifact.py) — the same way an engineer who owns this
-    system would encode edge cases they've tested for, not something a
-    single linear trace could honestly claim to have discovered.
+    from a discovery run: a successful run, by definition, didn't hit them.
+    They are properties of the vendor app, declared once in its outcome
+    profile and applied to every artifact recorded on it
+    (artifacts/profile.py).
 """
 from __future__ import annotations
 

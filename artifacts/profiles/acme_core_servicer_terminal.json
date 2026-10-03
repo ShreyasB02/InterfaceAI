@@ -1,0 +1,37 @@
+{
+  "vendor_product": "ACME Core Servicer Terminal",
+  "description": "Runtime conditions this vendor app is known to produce. Applied to every artifact recorded on it; a rule attaches wherever the flow contains the control it is anchored to.",
+  "known_outcomes": [
+    {
+      "code": "member_not_found",
+      "message": "No member exists with the given ID.",
+      "after": {"click": "Search"},
+      "detect": {"text": "No member found matching ID"},
+      "reasoning": "Banner the app renders on a search with no match."
+    },
+    {
+      "code": "permission_denied",
+      "message": "The action is blocked for this member (compliance hold).",
+      "after": {"click": "Continue"},
+      "detect": {"text": "Action not permitted"},
+      "reasoning": "Banner the app renders for a restricted member."
+    },
+    {
+      "code": "invalid_deposit_amount",
+      "message": "The initial deposit did not meet the app's minimum.",
+      "after": {"click": "Continue"},
+      "detect": {"text": "Initial deposit must be at least"},
+      "reasoning": "Validation banner on the sub-account form."
+    }
+  ],
+  "recoverable_patterns": [
+    {
+      "condition": "One-time session-expired interstitial on member detail load.",
+      "after": {"click": "View Member"},
+      "detect": {"text": "Your session has expired"},
+      "reasoning": "Interstitial banner; the page loads normally on a second request.",
+      "recovery_action": "reload_and_retry",
+      "max_attempts": 1
+    }
+  ]
+}
