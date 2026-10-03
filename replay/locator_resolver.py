@@ -14,15 +14,11 @@ from typing import Optional
 from playwright.sync_api import Locator, Page
 
 from artifacts.schema import LocatorMethod, LocatorSpec
+from replay.surface import TargetNotFound, describe_strategy
 
 
-class LocatorResolutionError(Exception):
-    def __init__(self, spec: LocatorSpec, attempts: list[str]):
-        self.spec = spec
-        self.attempts = attempts
-        super().__init__(
-            "No locator strategy resolved to exactly one element. Tried: " + "; ".join(attempts)
-        )
+# The executor-facing name for this failure lives with the Surface contract.
+LocatorResolutionError = TargetNotFound
 
 
 @dataclass
@@ -32,11 +28,7 @@ class ResolvedLocator:
     method: LocatorMethod
 
 
-def describe(strategy) -> str:
-    """Human-readable form of one strategy, for failure messages."""
-    if strategy.method == LocatorMethod.ROLE and strategy.role_name:
-        return f"role={strategy.value!r} name={strategy.role_name!r}"
-    return f"{strategy.method.value}={strategy.value!r}"
+describe = describe_strategy
 
 
 def build_locator(page: Page, strategy) -> Locator:
