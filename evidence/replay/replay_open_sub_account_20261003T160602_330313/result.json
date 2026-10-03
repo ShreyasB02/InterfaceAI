@@ -1,0 +1,31 @@
+{
+  "outcome": "failure",
+  "artifact_id": "af22f688-f026-4e77-95e6-923030311f3e",
+  "artifact_version": "4.1.0",
+  "run_id": "replay_open_sub_account_20261003T160602_330313",
+  "started_at": "2026-10-03T23:06:02.490638Z",
+  "finished_at": "2026-10-03T23:06:06.867753Z",
+  "outputs": {},
+  "business_outcome": null,
+  "failure": {
+    "step_id": "s9",
+    "expected": "a human to resolve the intervention",
+    "observed": "the pending escalation was cancelled by an operator",
+    "message": "Simulated operator gave up after 2.0s.",
+    "screenshot": null,
+    "dom_snapshot": null
+  },
+  "escalation": {
+    "reason": "Step s9 (Click 'Confirm & Open Account' button) is irreversible and requires a human before proceeding.",
+    "step_id": "s9",
+    "intervention_request_id": "ccfb8e8d-7b60-43a6-a2fa-c04c2b0bada6",
+    "kind": "risk_confirmation",
+    "resolution": "cancelled",
+    "human_actions": []
+  },
+  "interrupted": null,
+  "recovered_steps": [],
+  "locator_fallbacks": [],
+  "steps_executed": 8,
+  "evidence_path": "evidence/replay/replay_open_sub_account_20261003T160602_330313/"
+}

@@ -1,0 +1,1 @@
+{"ts": "2026-10-03T23:05:15.018966+00:00", "event": "run_not_started", "outcome": "refused", "artifact": "lookup_member_balance", "version": "1.0.0", "reason": "lookup_member_balance v1.0.0 is an unreviewed draft and cannot be replayed unattended. Approve it (python -m artifacts.review approve ...), or run it attended to validate it."}

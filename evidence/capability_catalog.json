@@ -1,13 +1,13 @@
 [
   {
     "name": "lookup_member_balance",
-    "description": "Look up member {member_id} and read their current savings balance. \u2014 Successfully looked up member {member_id} and retrieved their current savings balance.",
+    "description": "Look up member {member_id} and read their current savings balance. \u2014 Successfully looked up member {member_id} and read their current savings balance.",
     "input_schema": {
       "type": "object",
       "properties": {
         "member_id": {
           "type": "string",
-          "description": "Value for member_id.",
+          "description": "The member's ID as shown in the servicer console, e.g. 10001.",
           "examples": [
             "10001"
           ]
@@ -47,27 +47,27 @@
   },
   {
     "name": "open_sub_account",
-    "description": "Open a new sub-account for member {member_id} with nickname '{nickname}' and an initial deposit of {initial_deposit}, and reach the confirmation screen. \u2014 Opened a new sub-account with nickname '{nickname}' and initial deposit of {initial_deposit}.",
+    "description": "Open a new sub-account for member {member_id} with nickname '{nickname}' and an initial deposit of {initial_deposit}, and reach the confirmation screen. \u2014 Successfully opened a new sub-account for member {member_id} with the nickname '{nickname}' and an initial deposit of {initial_deposit}.",
     "input_schema": {
       "type": "object",
       "properties": {
         "member_id": {
           "type": "string",
-          "description": "Value for member_id.",
+          "description": "The member's ID as shown in the servicer console, e.g. 10001.",
           "examples": [
             "10001"
           ]
         },
         "nickname": {
           "type": "string",
-          "description": "Value for nickname.",
+          "description": "Display name for the new sub-account.",
           "examples": [
             "Vacation Fund"
           ]
         },
         "initial_deposit": {
           "type": "number",
-          "description": "Value for initial_deposit.",
+          "description": "Opening deposit in USD; the app enforces a minimum.",
           "examples": [
             "150"
           ]
@@ -94,8 +94,12 @@
     },
     "outcomes": [
       {
+        "code": "member_not_found",
+        "message": "No member exists with the given ID."
+      },
+      {
         "code": "permission_denied",
-        "message": "Sub-account creation is blocked for this member (compliance hold)."
+        "message": "The action is blocked for this member (compliance hold)."
       },
       {
         "code": "invalid_deposit_amount",

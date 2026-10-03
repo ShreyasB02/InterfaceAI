@@ -1,0 +1,24 @@
+{
+  "outcome": "input_error",
+  "artifact_id": "af22f688-f026-4e77-95e6-923030311f3e",
+  "artifact_version": "4.1.0",
+  "run_id": "replay_open_sub_account_20261003T160649_322b4e",
+  "started_at": "2026-10-03T23:06:49.483341Z",
+  "finished_at": "2026-10-03T23:06:49.483530Z",
+  "outputs": {},
+  "business_outcome": null,
+  "failure": {
+    "step_id": "preflight",
+    "expected": "valid input params",
+    "observed": "Input param 'initial_deposit' must be a number; got 'lots'.",
+    "message": "Input param 'initial_deposit' must be a number; got 'lots'.",
+    "screenshot": null,
+    "dom_snapshot": null
+  },
+  "escalation": null,
+  "interrupted": null,
+  "recovered_steps": [],
+  "locator_fallbacks": [],
+  "steps_executed": 0,
+  "evidence_path": "evidence/replay/replay_open_sub_account_20261003T160649_322b4e/"
+}

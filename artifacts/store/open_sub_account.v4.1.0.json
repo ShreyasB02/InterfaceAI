@@ -1,23 +1,23 @@
 {
-  "artifact_id": "3efd58ec-7cea-44cf-aa6d-845027f37496",
+  "artifact_id": "af22f688-f026-4e77-95e6-923030311f3e",
   "name": "open_sub_account",
   "version": "4.1.0",
-  "description": "Open a new sub-account for member {member_id} with nickname '{nickname}' and an initial deposit of {initial_deposit}, and reach the confirmation screen. — Opened a new sub-account with nickname '{nickname}' and initial deposit of {initial_deposit}.",
+  "description": "Open a new sub-account for member {member_id} with nickname '{nickname}' and an initial deposit of {initial_deposit}, and reach the confirmation screen. — Successfully opened a new sub-account for member {member_id} with the nickname '{nickname}' and an initial deposit of {initial_deposit}.",
   "status": "approved",
   "review": {
     "reviewed_by": "ShreyasB02",
-    "reviewed_at": "2026-10-03T18:14:06.942376Z",
+    "reviewed_at": "2026-10-03T23:05:51.724405Z",
     "notes": "Reviewed while generating the evidence set (scripts/make_evidence.py).",
-    "content_hash": "ec1993c764d89936b63d6e0fc0a3a210b0786e397166b2da11b013f7bdda0018"
+    "content_hash": "e00e3c7934fde2044c0e224226205573e12cebea864e86bfc4b4bdbaeb210055"
   },
-  "created_at": "2026-10-03T18:14:06.470862Z",
+  "created_at": "2026-10-03T23:05:51.238048Z",
   "provenance": {
     "goal": "Open a new sub-account for member {member_id} with nickname '{nickname}' and an initial deposit of {initial_deposit}, and reach the confirmation screen.",
-    "discovery_run_id": "open_sub_account_20261003T111337_c585eb",
+    "discovery_run_id": "open_sub_account_20261003T160515_0cd366",
     "model_provider": "openrouter",
     "model_name": "google/gemini-2.5-flash",
-    "recorded_at": "2026-10-03T18:14:06.470772Z",
-    "evidence_path": "evidence/discovery/open_sub_account_20261003T111337_c585eb/",
+    "recorded_at": "2026-10-03T23:05:51.237935Z",
+    "evidence_path": "evidence/discovery/open_sub_account_20261003T160515_0cd366/",
     "human_interventions": 0
   },
   "target": {
@@ -31,7 +31,7 @@
       "name": "member_id",
       "type": "string",
       "required": true,
-      "description": "Value for member_id.",
+      "description": "The member's ID as shown in the servicer console, e.g. 10001.",
       "example": "10001",
       "validation_pattern": null
     },
@@ -39,7 +39,7 @@
       "name": "nickname",
       "type": "string",
       "required": true,
-      "description": "Value for nickname.",
+      "description": "Display name for the new sub-account.",
       "example": "Vacation Fund",
       "validation_pattern": null
     },
@@ -47,7 +47,7 @@
       "name": "initial_deposit",
       "type": "number",
       "required": true,
-      "description": "Value for initial_deposit.",
+      "description": "Opening deposit in USD; the app enforces a minimum.",
       "example": "150",
       "validation_pattern": null
     }
@@ -297,15 +297,30 @@
     }
   ],
   "checkpoint": {
-    "description": "The page shows 'Sub-account opened successfully' and displays the new account number and nickname.",
+    "description": "The page displays 'Sub-account opened successfully.' and the new account number, nickname, and initial deposit are visible.",
     "method": "url_matches",
     "value": "/members/{member_id}/open-subaccount/confirm",
     "target": null
   },
   "known_outcomes": [
     {
+      "code": "member_not_found",
+      "message": "No member exists with the given ID.",
+      "after_step": "s3",
+      "detection": {
+        "strategies": [
+          {
+            "method": "text",
+            "value": "No member found matching ID",
+            "role_name": null,
+            "reasoning": "Banner the app renders on a search with no match."
+          }
+        ]
+      }
+    },
+    {
       "code": "permission_denied",
-      "message": "Sub-account creation is blocked for this member (compliance hold).",
+      "message": "The action is blocked for this member (compliance hold).",
       "after_step": "s8",
       "detection": {
         "strategies": [
@@ -313,7 +328,7 @@
             "method": "text",
             "value": "Action not permitted",
             "role_name": null,
-            "reasoning": "Exact banner text for a restricted member."
+            "reasoning": "Banner the app renders for a restricted member."
           }
         ]
       }
@@ -328,7 +343,7 @@
             "method": "text",
             "value": "Initial deposit must be at least",
             "role_name": null,
-            "reasoning": "Exact validation banner text."
+            "reasoning": "Validation banner on the sub-account form."
           }
         ]
       }
@@ -344,7 +359,7 @@
             "method": "text",
             "value": "Your session has expired",
             "role_name": null,
-            "reasoning": "Exact interstitial banner text."
+            "reasoning": "Interstitial banner; the page loads normally on a second request."
           }
         ]
       },

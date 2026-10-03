@@ -1,0 +1,24 @@
+{
+  "outcome": "failure",
+  "artifact_id": "ac3e3b0d-52f3-4354-8270-5a30ddeff11f",
+  "artifact_version": "1.1.0",
+  "run_id": "replay_lookup_member_balance_20261003T160513_f0f170",
+  "started_at": "2026-10-03T23:05:13.847251Z",
+  "finished_at": "2026-10-03T23:05:14.315808Z",
+  "outputs": {},
+  "business_outcome": null,
+  "failure": {
+    "step_id": "s2",
+    "expected": "URL within allowlist",
+    "observed": "Action type 'fill' is not permitted by policy (allowed: ['click', 'extract', 'navigate', 'wait_for']). Refusing to act.",
+    "message": "Allowlist violation — execution stopped.",
+    "screenshot": "screenshots/001_failure.png",
+    "dom_snapshot": "failure_dom.html"
+  },
+  "escalation": null,
+  "interrupted": null,
+  "recovered_steps": [],
+  "locator_fallbacks": [],
+  "steps_executed": 1,
+  "evidence_path": "evidence/replay/replay_lookup_member_balance_20261003T160513_f0f170/"
+}

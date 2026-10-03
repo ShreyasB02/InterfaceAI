@@ -1,0 +1,1 @@
+{"ts": "2026-10-03T23:06:49.483544+00:00", "event": "run_not_started", "outcome": "input_error", "artifact": "open_sub_account", "version": "4.1.0", "reason": "Input param 'initial_deposit' must be a number; got 'lots'."}

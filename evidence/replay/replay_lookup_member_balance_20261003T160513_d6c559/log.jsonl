@@ -1,0 +1,4 @@
+{"ts": "2026-10-03T23:05:13.320725+00:00", "event": "run_started", "artifact": "lookup_member_balance", "version": "1.1.0", "status": "approved", "attended": false, "auto_approve": false, "params": {"member_id": "10001"}}
+{"ts": "2026-10-03T23:05:13.675891+00:00", "event": "browser_action_failed", "step_id": "session_bootstrap", "expected": "session bootstrap (login) to complete", "observed": "Error: Page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5999/login (url=about:blank)", "message": "A browser action failed or timed out.", "screenshot": "screenshots/001_failure.png", "dom_snapshot": "failure_dom.html"}
+{"ts": "2026-10-03T23:05:13.711014+00:00", "event": "final_state", "outcome": "failure", "screenshot": "screenshots/002_final_failure.png"}
+{"ts": "2026-10-03T23:05:13.728652+00:00", "event": "run_finished", "outcome": "failure"}

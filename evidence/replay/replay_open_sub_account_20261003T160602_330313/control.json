@@ -1,0 +1,19 @@
+{
+  "run_id": "replay_open_sub_account_20261003T160602_330313",
+  "status": "ended",
+  "human_actions": [],
+  "intervention_request": {
+    "id": "ccfb8e8d-7b60-43a6-a2fa-c04c2b0bada6",
+    "kind": "risk_confirmation",
+    "reason": "Step s9 (Click 'Confirm & Open Account' button) is irreversible and requires a human before proceeding.",
+    "step_id": "s9",
+    "capability": "open_sub_account",
+    "goal": "Open a new sub-account for member {member_id} with nickname '{nickname}' and an initial deposit of {initial_deposit}, and reach the confirmation screen. \u2014 Successfully opened a new sub-account for member {member_id} with the nickname '{nickname}' and an initial deposit of {initial_deposit}.",
+    "current_url": "http://127.0.0.1:5055/members/10002/open-subaccount",
+    "actions_from": 0,
+    "screenshot_path": "screenshots/001_pre_escalation_s9.png",
+    "cdp_endpoint": "http://127.0.0.1:53670",
+    "requested_at": "2026-10-03T23:06:04.732499+00:00"
+  },
+  "outcome": "failure"
+}

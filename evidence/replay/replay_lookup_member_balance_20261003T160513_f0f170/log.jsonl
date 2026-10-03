@@ -1,0 +1,6 @@
+{"ts": "2026-10-03T23:05:13.847516+00:00", "event": "run_started", "artifact": "lookup_member_balance", "version": "1.1.0", "status": "approved", "attended": false, "auto_approve": false, "params": {"member_id": "10001"}}
+{"ts": "2026-10-03T23:05:14.189879+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-10-03T23:05:14.198388+00:00", "event": "step_executed", "step_id": "s1", "action": "navigate", "intent": "Navigate to the starting page for this capability."}
+{"ts": "2026-10-03T23:05:14.250045+00:00", "event": "allowlist_violation", "step_id": "s2", "expected": "URL within allowlist", "observed": "Action type 'fill' is not permitted by policy (allowed: ['click', 'extract', 'navigate', 'wait_for']). Refusing to act.", "message": "Allowlist violation \u2014 execution stopped.", "screenshot": "screenshots/001_failure.png", "dom_snapshot": "failure_dom.html"}
+{"ts": "2026-10-03T23:05:14.295740+00:00", "event": "final_state", "outcome": "failure", "screenshot": "screenshots/002_final_failure.png"}
+{"ts": "2026-10-03T23:05:14.316306+00:00", "event": "run_finished", "outcome": "failure"}

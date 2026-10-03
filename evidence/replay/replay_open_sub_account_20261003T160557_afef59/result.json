@@ -1,0 +1,53 @@
+{
+  "outcome": "success",
+  "artifact_id": "af22f688-f026-4e77-95e6-923030311f3e",
+  "artifact_version": "4.1.0",
+  "run_id": "replay_open_sub_account_20261003T160557_afef59",
+  "started_at": "2026-10-03T23:05:57.987119Z",
+  "finished_at": "2026-10-03T23:06:02.367238Z",
+  "outputs": {
+    "new_account_number": "SUB-10002-79"
+  },
+  "business_outcome": null,
+  "failure": null,
+  "escalation": {
+    "reason": "Step s9 (Click 'Confirm & Open Account' button) is irreversible and requires a human before proceeding.",
+    "step_id": "s9",
+    "intervention_request_id": "eedcfe72-1ea6-4aff-8682-b69bdd84ccb3",
+    "kind": "risk_confirmation",
+    "resolution": "resumed",
+    "human_actions": [
+      {
+        "at": "2026-10-03T23:06:01.414603+00:00",
+        "source": "observed",
+        "kind": "click",
+        "description": "Clicked 'Confirm & Open Account' button",
+        "tag": "button",
+        "text": "Confirm & Open Account"
+      },
+      {
+        "at": "2026-10-03T23:06:01.415625+00:00",
+        "source": "observed",
+        "kind": "dialog",
+        "description": "A dialog appeared: 'This will open a new sub-account and cannot be undone. Continue?'"
+      },
+      {
+        "at": "2026-10-03T23:06:01.422401+00:00",
+        "source": "observed",
+        "kind": "navigate",
+        "description": "Page navigated to http://127.0.0.1:5055/members/10002/open-subaccount/confirm",
+        "url": "http://127.0.0.1:5055/members/10002/open-subaccount/confirm"
+      },
+      {
+        "at": "2026-10-03T23:06:02.042411+00:00",
+        "source": "operator_note",
+        "description": "Scripted operator performed 1 action(s) and handed control back."
+      }
+    ]
+  },
+  "interrupted": null,
+  "recovered_steps": [],
+  "locator_fallbacks": [],
+  "steps_executed": 10,
+  "evidence_path": "evidence/replay/replay_open_sub_account_20261003T160557_afef59/"
+}

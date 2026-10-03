@@ -1,0 +1,10 @@
+{"ts": "2026-10-03T23:05:04.990935+00:00", "event": "run_started", "artifact": "lookup_member_balance", "version": "1.1.0", "status": "approved", "attended": false, "auto_approve": false, "params": {"member_id": "10002"}}
+{"ts": "2026-10-03T23:05:05.358273+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-10-03T23:05:05.365736+00:00", "event": "step_executed", "step_id": "s1", "action": "navigate", "intent": "Navigate to the starting page for this capability."}
+{"ts": "2026-10-03T23:05:05.381179+00:00", "event": "step_executed", "step_id": "s2", "action": "fill", "intent": "Fill the 'Member ID' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T23:05:05.421859+00:00", "event": "step_executed", "step_id": "s3", "action": "click", "intent": "Click 'Search' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:05:05.846748+00:00", "event": "step_executed", "step_id": "s4", "action": "extract", "intent": "Read the 'Name' value into member_name", "locator_strategy_index": 0, "locator_method": "xpath"}
+{"ts": "2026-10-03T23:05:05.873329+00:00", "event": "step_executed", "step_id": "s5", "action": "click", "intent": "Click 'View Member' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:05:06.286992+00:00", "event": "step_executed", "step_id": "s6", "action": "extract", "intent": "Read the 'Savings' value into savings_balance", "locator_strategy_index": 0, "locator_method": "xpath"}
+{"ts": "2026-10-03T23:05:06.323339+00:00", "event": "final_state", "outcome": "success", "screenshot": "screenshots/001_final_success.png"}
+{"ts": "2026-10-03T23:05:06.343360+00:00", "event": "run_finished", "outcome": "success"}

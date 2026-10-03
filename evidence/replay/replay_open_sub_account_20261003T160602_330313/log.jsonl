@@ -1,0 +1,14 @@
+{"ts": "2026-10-03T23:06:02.490898+00:00", "event": "run_started", "artifact": "open_sub_account", "version": "4.1.0", "status": "approved", "attended": false, "auto_approve": false, "params": {"member_id": "10002", "nickname": "Rainy Day", "initial_deposit": "100"}}
+{"ts": "2026-10-03T23:06:02.842986+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-10-03T23:06:02.850920+00:00", "event": "step_executed", "step_id": "s1", "action": "navigate", "intent": "Navigate to the starting page for this capability."}
+{"ts": "2026-10-03T23:06:02.864662+00:00", "event": "step_executed", "step_id": "s2", "action": "fill", "intent": "Fill the 'Member ID' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T23:06:02.902045+00:00", "event": "step_executed", "step_id": "s3", "action": "click", "intent": "Click 'Search' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:03.359181+00:00", "event": "step_executed", "step_id": "s4", "action": "click", "intent": "Click 'View Member' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:03.808984+00:00", "event": "step_executed", "step_id": "s5", "action": "click", "intent": "Click 'Open Sub-Account' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:03.827396+00:00", "event": "step_executed", "step_id": "s6", "action": "fill", "intent": "Fill the 'Sub-Account Nickname' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T23:06:03.835282+00:00", "event": "step_executed", "step_id": "s7", "action": "fill", "intent": "Fill the 'Initial Deposit (USD)' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T23:06:03.868687+00:00", "event": "step_executed", "step_id": "s8", "action": "click", "intent": "Click 'Continue' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:04.732806+00:00", "event": "escalation_requested", "step_id": "s9", "request_id": "ccfb8e8d-7b60-43a6-a2fa-c04c2b0bada6", "kind": "risk_confirmation", "reason": "Step s9 (Click 'Confirm & Open Account' button) is irreversible and requires a human before proceeding.", "screenshot": "screenshots/001_pre_escalation_s9.png"}
+{"ts": "2026-10-03T23:06:06.816425+00:00", "event": "escalation_cancelled", "step_id": "s9", "request_id": "ccfb8e8d-7b60-43a6-a2fa-c04c2b0bada6", "step_done": null, "human_actions": [], "requests_blocked_by_policy": [], "screenshot": "screenshots/002_post_escalation_s9.png"}
+{"ts": "2026-10-03T23:06:06.846881+00:00", "event": "final_state", "outcome": "failure", "screenshot": "screenshots/003_final_failure.png"}
+{"ts": "2026-10-03T23:06:06.868344+00:00", "event": "run_finished", "outcome": "failure"}

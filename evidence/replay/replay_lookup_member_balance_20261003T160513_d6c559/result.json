@@ -1,0 +1,24 @@
+{
+  "outcome": "failure",
+  "artifact_id": "ac3e3b0d-52f3-4354-8270-5a30ddeff11f",
+  "artifact_version": "1.1.0",
+  "run_id": "replay_lookup_member_balance_20261003T160513_d6c559",
+  "started_at": "2026-10-03T23:05:13.320456Z",
+  "finished_at": "2026-10-03T23:05:13.728173Z",
+  "outputs": {},
+  "business_outcome": null,
+  "failure": {
+    "step_id": "session_bootstrap",
+    "expected": "session bootstrap (login) to complete",
+    "observed": "Error: Page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5999/login (url=about:blank)",
+    "message": "A browser action failed or timed out.",
+    "screenshot": "screenshots/001_failure.png",
+    "dom_snapshot": "failure_dom.html"
+  },
+  "escalation": null,
+  "interrupted": null,
+  "recovered_steps": [],
+  "locator_fallbacks": [],
+  "steps_executed": 0,
+  "evidence_path": "evidence/replay/replay_lookup_member_balance_20261003T160513_d6c559/"
+}

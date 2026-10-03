@@ -1,0 +1,6 @@
+{"ts": "2026-10-03T23:05:14.438094+00:00", "event": "run_started", "artifact": "lookup_member_balance", "version": "1.1.0", "status": "approved", "attended": false, "auto_approve": false, "params": {"member_id": "10001"}}
+{"ts": "2026-10-03T23:05:14.790231+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-10-03T23:05:14.790845+00:00", "event": "run_interrupted", "step_id": "s1", "reason": "Simulated operator interrupted the run 0.0s in."}
+{"ts": "2026-10-03T23:05:14.831350+00:00", "event": "run_interrupted_caught", "detail": "Simulated operator interrupted the run 0.0s in.", "screenshot": "screenshots/001_interrupted.png"}
+{"ts": "2026-10-03T23:05:14.879000+00:00", "event": "final_state", "outcome": "interrupted", "screenshot": "screenshots/002_final_interrupted.png"}
+{"ts": "2026-10-03T23:05:14.899690+00:00", "event": "run_finished", "outcome": "interrupted"}

@@ -1,23 +1,23 @@
 {
-  "artifact_id": "0ed50a83-9437-422b-bf84-1f42304232f5",
+  "artifact_id": "ac3e3b0d-52f3-4354-8270-5a30ddeff11f",
   "name": "lookup_member_balance",
   "version": "1.1.0",
-  "description": "Look up member {member_id} and read their current savings balance. — Successfully looked up member {member_id} and retrieved their current savings balance.",
+  "description": "Look up member {member_id} and read their current savings balance. — Successfully looked up member {member_id} and read their current savings balance.",
   "status": "approved",
   "review": {
     "reviewed_by": "ShreyasB02",
-    "reviewed_at": "2026-10-03T18:13:25.718628Z",
+    "reviewed_at": "2026-10-03T23:05:03.326572Z",
     "notes": "Reviewed while generating the evidence set (scripts/make_evidence.py).",
-    "content_hash": "3257c44977ebe2735a131ef4c6bc346fa346d2148c7a64315ec6811c0e06335c"
+    "content_hash": "97e346b0d23eb17fb65cce72cfc9d26d5d90b67a1859686f96074f4b8b6f4184"
   },
-  "created_at": "2026-10-03T18:13:25.252927Z",
+  "created_at": "2026-10-03T23:05:02.871957Z",
   "provenance": {
     "goal": "Look up member {member_id} and read their current savings balance.",
-    "discovery_run_id": "lookup_member_balance_20261003T111302_c4ebbc",
+    "discovery_run_id": "lookup_member_balance_20261003T160426_2fabd2",
     "model_provider": "openrouter",
     "model_name": "google/gemini-2.5-flash",
-    "recorded_at": "2026-10-03T18:13:25.252781Z",
-    "evidence_path": "evidence/discovery/lookup_member_balance_20261003T111302_c4ebbc/",
+    "recorded_at": "2026-10-03T23:05:02.871848Z",
+    "evidence_path": "evidence/discovery/lookup_member_balance_20261003T160426_2fabd2/",
     "human_interventions": 0
   },
   "target": {
@@ -31,7 +31,7 @@
       "name": "member_id",
       "type": "string",
       "required": true,
-      "description": "Value for member_id.",
+      "description": "The member's ID as shown in the servicer console, e.g. 10001.",
       "example": "10001",
       "validation_pattern": null
     }
@@ -111,29 +111,6 @@
     },
     {
       "step_id": "s4",
-      "intent": "Click 'View Member' button",
-      "action": "click",
-      "target": {
-        "strategies": [
-          {
-            "method": "role",
-            "value": "button",
-            "role_name": "View Member",
-            "reasoning": "Accessible role+name ('button', \"View Member\") targets what a user actually reads, which survives markup restructuring better than a positional selector."
-          }
-        ]
-      },
-      "value_literal": null,
-      "value_param": null,
-      "output_name": null,
-      "on_dialog": null,
-      "timeout_ms": 5000,
-      "origin": "model",
-      "risk_level": "safe",
-      "requires_confirmation": false
-    },
-    {
-      "step_id": "s5",
       "intent": "Read the 'Name' value into member_name",
       "action": "extract",
       "target": {
@@ -149,6 +126,29 @@
       "value_literal": null,
       "value_param": null,
       "output_name": "member_name",
+      "on_dialog": null,
+      "timeout_ms": 5000,
+      "origin": "model",
+      "risk_level": "safe",
+      "requires_confirmation": false
+    },
+    {
+      "step_id": "s5",
+      "intent": "Click 'View Member' button",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "method": "role",
+            "value": "button",
+            "role_name": "View Member",
+            "reasoning": "Accessible role+name ('button', \"View Member\") targets what a user actually reads, which survives markup restructuring better than a positional selector."
+          }
+        ]
+      },
+      "value_literal": null,
+      "value_param": null,
+      "output_name": null,
       "on_dialog": null,
       "timeout_ms": 5000,
       "origin": "model",
@@ -180,7 +180,7 @@
     }
   ],
   "checkpoint": {
-    "description": "The member's detail page shows their name as {member_name} and their savings balance as [[TOK16]].",
+    "description": "The member's full name is '{member_name}' and their savings balance is '[[TOK27]]', as shown in the Member Detail and Accounts tables respectively.",
     "method": "url_matches",
     "value": "/members/{member_id}",
     "target": null
@@ -196,7 +196,7 @@
             "method": "text",
             "value": "No member found matching ID",
             "role_name": null,
-            "reasoning": "Exact banner text the app renders on a failed search."
+            "reasoning": "Banner the app renders on a search with no match."
           }
         ]
       }
@@ -205,14 +205,14 @@
   "recoverable_patterns": [
     {
       "condition": "One-time session-expired interstitial on member detail load.",
-      "after_step": "s4",
+      "after_step": "s5",
       "detection": {
         "strategies": [
           {
             "method": "text",
             "value": "Your session has expired",
             "role_name": null,
-            "reasoning": "Exact interstitial banner text."
+            "reasoning": "Interstitial banner; the page loads normally on a second request."
           }
         ]
       },

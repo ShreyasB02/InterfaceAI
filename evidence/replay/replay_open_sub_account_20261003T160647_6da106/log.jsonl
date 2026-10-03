@@ -1,0 +1,14 @@
+{"ts": "2026-10-03T23:06:47.030550+00:00", "event": "run_started", "artifact": "open_sub_account", "version": "4.1.0", "status": "approved", "attended": false, "auto_approve": true, "params": {"member_id": "10002", "nickname": "Catalog Demo", "initial_deposit": 75}}
+{"ts": "2026-10-03T23:06:47.403900+00:00", "event": "session_bootstrapped"}
+{"ts": "2026-10-03T23:06:47.411550+00:00", "event": "step_executed", "step_id": "s1", "action": "navigate", "intent": "Navigate to the starting page for this capability."}
+{"ts": "2026-10-03T23:06:47.426309+00:00", "event": "step_executed", "step_id": "s2", "action": "fill", "intent": "Fill the 'Member ID' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T23:06:47.467035+00:00", "event": "step_executed", "step_id": "s3", "action": "click", "intent": "Click 'Search' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:47.923406+00:00", "event": "step_executed", "step_id": "s4", "action": "click", "intent": "Click 'View Member' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:48.373871+00:00", "event": "step_executed", "step_id": "s5", "action": "click", "intent": "Click 'Open Sub-Account' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:48.391223+00:00", "event": "step_executed", "step_id": "s6", "action": "fill", "intent": "Fill the 'Sub-Account Nickname' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T23:06:48.399330+00:00", "event": "step_executed", "step_id": "s7", "action": "fill", "intent": "Fill the 'Initial Deposit (USD)' field with a supplied value", "locator_strategy_index": 0, "locator_method": "css"}
+{"ts": "2026-10-03T23:06:48.433788+00:00", "event": "step_executed", "step_id": "s8", "action": "click", "intent": "Click 'Continue' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:49.294717+00:00", "event": "step_executed", "step_id": "s9", "action": "click", "intent": "Click 'Confirm & Open Account' button", "locator_strategy_index": 0, "locator_method": "role"}
+{"ts": "2026-10-03T23:06:49.310649+00:00", "event": "step_executed", "step_id": "s11", "action": "extract", "intent": "Read the 'New Account Number' value into new_account_number", "locator_strategy_index": 0, "locator_method": "xpath"}
+{"ts": "2026-10-03T23:06:49.365772+00:00", "event": "final_state", "outcome": "success", "screenshot": "screenshots/001_final_success.png"}
+{"ts": "2026-10-03T23:06:49.385593+00:00", "event": "run_finished", "outcome": "success"}

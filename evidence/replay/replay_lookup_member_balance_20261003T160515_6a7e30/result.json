@@ -1,0 +1,24 @@
+{
+  "outcome": "refused",
+  "artifact_id": "ac3e3b0d-52f3-4354-8270-5a30ddeff11f",
+  "artifact_version": "1.0.0",
+  "run_id": "replay_lookup_member_balance_20261003T160515_6a7e30",
+  "started_at": "2026-10-03T23:05:15.018822Z",
+  "finished_at": "2026-10-03T23:05:15.018939Z",
+  "outputs": {},
+  "business_outcome": null,
+  "failure": {
+    "step_id": "preflight",
+    "expected": "an artifact approved for this kind of run",
+    "observed": "lookup_member_balance v1.0.0 is an unreviewed draft and cannot be replayed unattended. Approve it (python -m artifacts.review approve ...), or run it attended to validate it.",
+    "message": "lookup_member_balance v1.0.0 is an unreviewed draft and cannot be replayed unattended. Approve it (python -m artifacts.review approve ...), or run it attended to validate it.",
+    "screenshot": null,
+    "dom_snapshot": null
+  },
+  "escalation": null,
+  "interrupted": null,
+  "recovered_steps": [],
+  "locator_fallbacks": [],
+  "steps_executed": 0,
+  "evidence_path": "evidence/replay/replay_lookup_member_balance_20261003T160515_6a7e30/"
+}
