@@ -202,7 +202,8 @@ def _format_observation_for_model(obs, tokenizer: Tokenizer, action_note: Option
 class DiscoveryRun:
     def __init__(self, *, capability_name: str, goal: str, base_url: str, entry_path: str,
                  params: dict[str, str], outputs: list[dict], evidence_root: Path,
-                 param_types: Optional[dict[str, str]] = None, headless: bool = True,
+                 param_types: Optional[dict[str, str]] = None,
+                 param_descriptions: Optional[dict[str, str]] = None, headless: bool = True,
                  vision: bool = True, llm=None, artifact_version: str = "1.0.0",
                  escalation_timeout_s: Optional[float] = 600, on_escalation=None, cdp_port: Optional[int] = None,
                  risk_gate: bool = True):
@@ -212,6 +213,7 @@ class DiscoveryRun:
         self.entry_path = entry_path
         self.params = params
         self.param_types = param_types or {}
+        self.param_descriptions = param_descriptions or {}
         self.outputs = outputs
         self.headless = headless
         # Vision: attach a real screenshot to the model's context each turn
@@ -774,7 +776,9 @@ class DiscoveryRun:
         input_schema = [
             InputParam(
                 name=name, type=_infer_param_type(name, value, self.param_types), required=True,
-                description=f"Value for {name}.", example=redact_text(str(value)),
+                # What a calling agent reads when deciding what to pass.
+                description=self.param_descriptions.get(name) or f"The {name.replace('_', ' ')} to use.",
+                example=redact_text(str(value)),
             )
             for name, value in self.params.items()
         ]

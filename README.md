@@ -16,6 +16,21 @@ demand.
 - Design write-up: [`REPORT.md`](./REPORT.md)
 - Evidence from real runs: [`evidence/`](./evidence/)
 
+## Where each requirement is met
+
+Row numbers refer to [`evidence/INDEX.md`](./evidence/INDEX.md).
+
+| Brief | Requirement | Implemented in | Evidence |
+|---|---|---|---|
+| 3.1 | Goal-driven agent loop | `agent/discovery_loop.py`, `agent/tools.py`, `agent/llm/` | rows 1, 11, 17: real LLM runs, each decision logged with its reason |
+| 3.2 | Structured, versioned artifact | `artifacts/schema/artifact.py`, `artifacts/store/`, `artifacts/review.py` | the store itself; `python -m artifacts.review show <name>` |
+| 3.3 | Deterministic replay with an outcome taxonomy | `replay/executor.py`, `artifacts/schema/result.py` | rows 2–9, 12–14: success, business outcomes, recovery, hard failure |
+| 3.4 | Safety and policy guardrails | `guardrails/` | rows 8 and 10; `tests/test_guardrails.py` |
+| 3.5 | Evidence and observability | every run folder: `log.jsonl`, screenshots | row 7: failure with screenshot and DOM snapshot |
+| 3.6 | Human escalation and live-session handoff | `escalation/`, `replay/executor.py` (`_handoff`) | rows 15–17, and three runs resolved by a person ([`evidence/README.md`](./evidence/README.md)) |
+| 3.7 | Heterogeneity and multi-tenant design | `replay/surface.py`, `artifacts/profiles/`; [`REPORT.md`](./REPORT.md) §4 | `tests/test_surface_seam.py`: the engine replaying on a non-browser surface |
+| 8 | Stretch: approval gate; agent-facing catalog | `artifacts/review.py`, `capabilities/` | row 10; rows 18–20 |
+
 ## Setup
 
 Requires Python 3.11+.
@@ -95,7 +110,7 @@ Replay with other inputs to see each outcome class:
 Every run writes a structured log, screenshots, and its artifact or result
 JSON under `evidence/discovery/<run_id>/` or `evidence/replay/<run_id>/`.
 
-The committed evidence set (17 scenarios, indexed in
+The committed evidence set (20 scenarios, indexed in
 [`evidence/INDEX.md`](./evidence/INDEX.md)) is produced by one command that
 runs these CLIs in order and checks each outcome:
 

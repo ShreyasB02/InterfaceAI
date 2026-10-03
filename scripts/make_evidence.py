@@ -39,6 +39,9 @@ PY = sys.executable
 TARGET = os.environ.get("TARGET_APP_BASE_URL", "http://127.0.0.1:5055")
 rows: list[dict] = []
 
+MEMBER_ID_DESC = "member_id=The member's ID as shown in the servicer console, e.g. 10001."
+NICKNAME_DESC = "nickname=Display name for the new sub-account."
+
 
 class Unexpected(Exception):
     pass
@@ -142,7 +145,8 @@ def section_lookup(args):
             args, "discovery: lookup_member_balance", "A real LLM-driven run that completes the goal and records "
             "the artifact", name, "Look up member 10001 and read their current savings balance.",
             {"member_id": "10001"},
-            ["member_name:string:Member's full name", "savings_balance:number:Current savings balance in USD"], [],
+            ["member_name:string:Member's full name", "savings_balance:number:Current savings balance in USD"],
+            ["--param-desc", MEMBER_ID_DESC],
             validate=lambda a: None if {s.output_name for s in a.steps} >= {"member_name", "savings_balance"}
             else "missing an extract step", by="real model")
         augment_and_approve(args, name)
@@ -200,7 +204,10 @@ def section_open(args):
             "and reach the confirmation screen.",
             {"member_id": "10001", "nickname": "Vacation Fund", "initial_deposit": "150"},
             ["new_account_number:string:The new sub-account's number"],
-            ["--param-type", "initial_deposit=number", "--allow-irreversible"], validate=usable, by="real model")
+            ["--param-type", "initial_deposit=number", "--allow-irreversible", "--param-desc", MEMBER_ID_DESC,
+             "--param-desc", NICKNAME_DESC,
+             "--param-desc", "initial_deposit=Opening deposit in USD; the app enforces a minimum."],
+            validate=usable, by="real model")
         augment_and_approve(args, name)
 
     ok = {"member_id": "10002", "nickname": "Rainy Day", "initial_deposit": "100"}
@@ -240,7 +247,8 @@ def section_handoff(args):
         "do not choose them yourself.",
         {"member_id": "10001", "nickname": "Vacation Fund"},
         ["new_account_number:string:The new sub-account's number"],
-        ["--allow-irreversible", "--simulate-operator", "fill:nickname=Vacation Fund",
+        ["--allow-irreversible", "--param-desc", MEMBER_ID_DESC, "--param-desc", NICKNAME_DESC,
+         "--simulate-operator", "fill:nickname=Vacation Fund",
          "--simulate-operator", "fill:initial_deposit=150", "--simulate-operator", "click:Continue"],
         validate=lambda a: None if a.provenance.human_interventions and any(s.origin == "human" for s in a.steps)
         else "the model did not ask for a human", by="real model, scripted operator")
@@ -259,13 +267,26 @@ def section_catalog(args):
     (args.evidence_root / "capability_catalog.json").write_text(json.dumps(tools, indent=2) + "\n")
     print(f"  ok   catalog lists {[t['name'] for t in tools]}")
 
-    code, out = sh(["-m", "capabilities", "invoke", "lookup_member_balance", "--args",
-                    json.dumps({"member_id": "10002"}), "--evidence-root", str(args.evidence_root / "replay")])
-    result = json.loads(out[out.index("{"):out.rindex("}") + 1])
-    if result["outcome"] != "success":
-        raise Unexpected(f"catalog invoke: expected success, got {result['outcome']}")
-    record("catalog: agent invokes by name", "An approved capability called by name with typed JSON "
-           "arguments; returns the result contract", "success", args.evidence_root / "replay" / result["run_id"])
+    def call(scenario, shows, name, arguments, expect, extra=()):
+        _, out = sh(["-m", "capabilities", "invoke", name, "--args", json.dumps(arguments),
+                     "--evidence-root", str(args.evidence_root / "replay"), *extra])
+        try:
+            result = json.loads(out[out.index("{"):out.rindex("}") + 1])
+        except ValueError:
+            raise Unexpected(f"{scenario}: no result returned:\n{out[-800:]}")
+        if result["outcome"] != expect:
+            raise Unexpected(f"{scenario}: expected {expect}, got {result['outcome']}")
+        record(scenario, shows, expect, args.evidence_root / "replay" / result["run_id"])
+
+    call("catalog: agent invokes by name", "An approved capability called by name with typed JSON arguments; "
+         "returns the result contract", "lookup_member_balance", {"member_id": "10002"}, "success")
+    call("catalog: irreversible call, confirmed by review", "The artifact's approval stands as confirmation for "
+         "its irreversible step", "open_sub_account",
+         {"member_id": "10002", "nickname": "Catalog Demo", "initial_deposit": 75}, "success",
+         extra=["--confirmed-by-review"])
+    call("catalog: mistyped argument", "A wrong argument type is input_error before a browser opens",
+         "open_sub_account", {"member_id": "10002", "nickname": "Catalog Demo", "initial_deposit": "lots"},
+         "input_error", extra=["--confirmed-by-review"])
 
 
 def write_index(args) -> Path:

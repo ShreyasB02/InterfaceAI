@@ -59,6 +59,9 @@ def main():
     parser.add_argument("--param-type", action="append", default=[], type=_parse_param, dest="param_types",
                          help="Override a param's inferred type, e.g. initial_deposit=number. "
                               "Params default to string (safer for IDs that merely look numeric).")
+    parser.add_argument("--param-desc", action="append", default=[], type=_parse_param, dest="param_descs",
+                         help="What an input means, e.g. member_id=\"The member's 5-digit ID\". It becomes "
+                              "the input's description in the artifact, which is what a calling agent sees.")
     parser.add_argument("--output", action="append", default=[], type=_parse_output, dest="outputs")
     parser.add_argument("--headed", action="store_true", help="Show the browser window instead of running headless.")
     parser.add_argument("--no-vision", action="store_true",
@@ -112,6 +115,7 @@ def main():
         entry_path=args.entry_path,
         params=params,
         param_types=param_types,
+        param_descriptions=dict(args.param_descs),
         outputs=args.outputs,
         evidence_root=Path(args.evidence_root),
         headless=not args.headed,

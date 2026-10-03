@@ -1,6 +1,6 @@
 flask==3.0.3
 playwright==1.47.0
-google-genai
+google-genai==2.8.0
 pydantic==2.9.2
 python-dotenv==1.0.1
 httpx==0.28.1
