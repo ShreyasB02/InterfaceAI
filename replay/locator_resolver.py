@@ -32,6 +32,13 @@ class ResolvedLocator:
     method: LocatorMethod
 
 
+def describe(strategy) -> str:
+    """Human-readable form of one strategy, for failure messages."""
+    if strategy.method == LocatorMethod.ROLE and strategy.role_name:
+        return f"role={strategy.value!r} name={strategy.role_name!r}"
+    return f"{strategy.method.value}={strategy.value!r}"
+
+
 def build_locator(page: Page, strategy) -> Locator:
     if strategy.method == LocatorMethod.CSS:
         return page.locator(strategy.value)
@@ -54,9 +61,9 @@ def resolve(page: Page, spec: LocatorSpec, timeout_ms: int = 3000) -> ResolvedLo
             loc.first.wait_for(state="visible", timeout=timeout_ms)
             count = loc.count()
         except Exception as e:  # noqa: BLE001 - a failed wait/count is a miss, not a crash
-            attempts.append(f"[{i}] {strategy.method}={strategy.value!r} -> error: {e}")
+            attempts.append(f"[{i}] {describe(strategy)} -> not found: {str(e).splitlines()[0]}")
             continue
         if count == 1:
             return ResolvedLocator(locator=loc, strategy_index=i, method=strategy.method)
-        attempts.append(f"[{i}] {strategy.method}={strategy.value!r} -> matched {count} elements")
+        attempts.append(f"[{i}] {describe(strategy)} -> ambiguous: matched {count} elements")
     raise LocatorResolutionError(spec, attempts)

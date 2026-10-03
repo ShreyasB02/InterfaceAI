@@ -80,6 +80,22 @@ class FailureDetail(BaseModel):
     expected: str
     observed: str
     message: str
+    screenshot: Optional[str] = Field(
+        default=None, description="Path, relative to evidence_path, of the page at the moment of failure."
+    )
+    dom_snapshot: Optional[str] = Field(
+        default=None, description="Path, relative to evidence_path, of the redacted page HTML at failure."
+    )
+
+
+class LocatorFallback(BaseModel):
+    """A step whose primary (index-0) locator strategy did not resolve and a
+    lower-ranked one was used instead. The run still succeeded — this is the
+    drift signal: a tenant that starts reporting these is degrading before
+    it becomes an outright failure."""
+    step_id: str
+    strategy_index: int = Field(description="Index of the strategy that resolved (always > 0 here).")
+    method: str
 
 
 class EscalationDetail(BaseModel):
@@ -108,6 +124,7 @@ class ReplayResult(BaseModel):
     interrupted: Optional[InterruptDetail] = None
 
     recovered_steps: list[RecoveredStep] = Field(default_factory=list)
+    locator_fallbacks: list[LocatorFallback] = Field(default_factory=list)
     steps_executed: int = 0
     evidence_path: str = Field(description="Relative path under /evidence/ for this run's log.")
 

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
-from playwright.sync_api import Dialog, sync_playwright
+from playwright.sync_api import Dialog, Error as PlaywrightError, sync_playwright
 
 from artifacts.coerce import coerce_output_value
 from artifacts.schema import (
@@ -40,15 +40,25 @@ from artifacts.validate import validate_required_params
 from escalation.control_channel import ControlChannel
 from escalation.transport import ControlSignal, EscalationAbandoned, InterventionTimedOut, RunInterrupted
 from guardrails.allowlist import Allowlist, AllowlistViolation
-from guardrails.redaction import redact_dict
+from guardrails.redaction import redact_dict, redact_text
 from guardrails.risk_policy import needs_escalation
 from guardrails.safety import safe_screenshot
-from replay.locator_resolver import LocatorResolutionError, build_locator, resolve
+from replay.locator_resolver import LocatorResolutionError, ResolvedLocator, build_locator, describe, resolve
 
 EMPLOYEE_ID = "EMP001"
 PASSCODE = "demo1234"
 DEFAULT_CDP_PORT = 9333
 OUTCOME_PROBE_TIMEOUT_MS = 400
+
+
+class StepAssertionFailed(Exception):
+    """A mid-flow ASSERT_TEXT step did not hold. Carries expected/observed
+    so the FailureDetail is debuggable without re-running."""
+
+    def __init__(self, expected: str, observed: str):
+        super().__init__(f"Expected {expected}; observed {observed}")
+        self.expected = expected
+        self.observed = observed
 
 
 class ReplayExecutor:
@@ -85,6 +95,30 @@ class ReplayExecutor:
         name = f"{self._shot_count:03d}_{tag}.png"
         safe_screenshot(page, str(self.evidence_dir / "screenshots" / name))
         return f"screenshots/{name}"
+
+    def _failure(self, page, step_id: Optional[str], expected: str, observed: str,
+                 message: str, event: str = "step_failed") -> dict:
+        """Builds a FailureDetail and captures the richer failure evidence
+        (screenshot + redacted DOM snapshot). Capture is best-effort: the
+        page may be the thing that broke."""
+        shot = dom = None
+        try:
+            shot = self._screenshot(page, "failure")
+            (self.evidence_dir / "failure_dom.html").write_text(redact_text(page.content()))
+            dom = "failure_dom.html"
+        except Exception:  # noqa: BLE001 - evidence capture must never mask the real failure
+            pass
+        failure = {"step_id": step_id or "unknown", "expected": expected, "observed": observed,
+                   "message": message, "screenshot": shot, "dom_snapshot": dom}
+        self._log({"event": event, **failure})
+        return failure
+
+    @staticmethod
+    def _safe_url(page) -> str:
+        try:
+            return page.url
+        except Exception:  # noqa: BLE001
+            return "<unavailable>"
 
     def _resolve_value(self, step: Step, params: dict):
         if step.value_param:
@@ -132,12 +166,12 @@ class ReplayExecutor:
                 return pattern
         return None
 
-    def _apply_recovery(self, page, pattern: RecoverablePattern):
+    def _apply_recovery(self, page, pattern: RecoverablePattern, params: dict, outputs: dict):
         if pattern.recovery_action == RecoveryAction.RELOAD_AND_RETRY:
             page.reload()
         elif pattern.recovery_action == RecoveryAction.RETRY_STEP:
             producing = self.step_lookup[pattern.after_step]
-            self._execute_step(page, producing, {}, {})
+            self._execute_step(page, producing, params, outputs)
         elif pattern.recovery_action == RecoveryAction.DISMISS_AND_CONTINUE:
             pass  # condition detected but doesn't block proceeding
 
@@ -161,7 +195,11 @@ class ReplayExecutor:
 
     # -- step execution ----------------------------------------------------
 
-    def _execute_step(self, page, step: Step, params: dict, outputs: dict):
+    def _execute_step(self, page, step: Step, params: dict, outputs: dict) -> Optional[ResolvedLocator]:
+        """Executes one step. Returns the ResolvedLocator for steps that
+        target an element, so the caller can record which ranked strategy
+        actually matched (the drift signal)."""
+        resolved: Optional[ResolvedLocator] = None
         if step.action == ActionType.NAVIGATE:
             page.goto(self._base_url.rstrip("/") + "/" + self._resolve_nav_path(step, params).lstrip("/"))
             self.allowlist.check_url(page.url)
@@ -173,12 +211,36 @@ class ReplayExecutor:
             resolved.locator.click()
             self.allowlist.check_url(page.url)
         elif step.action == ActionType.WAIT_FOR:
-            resolve(page, step.target, timeout_ms=step.timeout_ms)
+            resolved = resolve(page, step.target, timeout_ms=step.timeout_ms)
+        elif step.action == ActionType.ASSERT_TEXT:
+            resolved = self._assert_text(page, step, params)
         elif step.action == ActionType.EXTRACT:
             resolved = resolve(page, step.target, timeout_ms=step.timeout_ms)
             outputs[step.output_name] = resolved.locator.inner_text().strip()
         elif step.action == ActionType.HANDLE_DIALOG:
             pass  # consumed by the preceding CLICK step, see run()
+        return resolved
+
+    def _assert_text(self, page, step: Step, params: dict) -> Optional[ResolvedLocator]:
+        """Mid-flow checkpoint. With a target: that element's text must
+        contain the expected value. Without one: the text must be visible
+        somewhere on the page."""
+        expected = self._resolve_value(step, params)
+        if expected is None:
+            raise StepAssertionFailed("an expected text value on the step", "assert_text step has no value")
+        expected = str(expected)
+        if step.target is not None:
+            resolved = resolve(page, step.target, timeout_ms=step.timeout_ms)
+            actual = resolved.locator.inner_text().strip()
+            if expected not in actual:
+                raise StepAssertionFailed(f"target text to contain {expected!r}", f"{redact_text(actual)[:200]!r}")
+            return resolved
+        try:
+            page.get_by_text(expected, exact=False).first.wait_for(state="visible", timeout=step.timeout_ms)
+        except PlaywrightError:
+            raise StepAssertionFailed(f"text {expected!r} visible on the page",
+                                      f"not visible within {step.timeout_ms}ms (url={self._safe_url(page)})")
+        return None
 
     # -- main entry point ----------------------------------------------------
 
@@ -206,6 +268,7 @@ class ReplayExecutor:
         control = ControlChannel(self.run_id, self.evidence_dir)
         outputs: dict = {}
         recovered_steps = []
+        locator_fallbacks = []
         last_step_id: Optional[str] = None
         current_step_id: Optional[str] = None
         outcome = ReplayOutcome.SUCCESS
@@ -219,9 +282,14 @@ class ReplayExecutor:
             browser = pw.chromium.launch(headless=self.headless, args=[f"--remote-debugging-port={self.cdp_port}"])
             page = browser.new_page()
             page.on("dialog", self._on_dialog)
-            self._bootstrap_session(page, self._base_url)
 
             try:
+                # Inside the try on purpose: a failed/slow login is a hard
+                # failure the caller needs as a structured result, not a
+                # traceback.
+                current_step_id = "session_bootstrap"
+                self._bootstrap_session(page, self._base_url)
+
                 i = 0
                 steps = self.artifact.steps
                 while i < len(steps):
@@ -254,11 +322,11 @@ class ReplayExecutor:
                     if rp:
                         for attempt in range(1, rp.max_attempts + 1):
                             self._log({"event": "recovering", "condition": rp.condition, "attempt": attempt})
-                            self._apply_recovery(page, rp)
+                            self._apply_recovery(page, rp, params, outputs)
                             if not self._quick_detect(page, rp.detection):
                                 recovered_steps.append({
                                     "step_id": step.step_id, "condition": rp.condition,
-                                    "action_taken": f"{rp.recovery_action} (attempt {attempt})",
+                                    "action_taken": f"{rp.recovery_action.value} (attempt {attempt})",
                                 })
                                 break
                         else:
@@ -346,9 +414,17 @@ class ReplayExecutor:
                     if step.action == ActionType.CLICK and i + 1 < len(steps) and steps[i + 1].action == ActionType.HANDLE_DIALOG:
                         self._pending_dialog_action = steps[i + 1].on_dialog
 
-                    self._execute_step(page, step, params, outputs)
-                    self._log({"event": "step_executed", "step_id": step.step_id,
-                                "action": step.action, "intent": step.intent})
+                    resolved = self._execute_step(page, step, params, outputs)
+                    event = {"event": "step_executed", "step_id": step.step_id,
+                             "action": step.action.value, "intent": step.intent}
+                    if resolved is not None:
+                        event["locator_strategy_index"] = resolved.strategy_index
+                        event["locator_method"] = resolved.method.value
+                        if resolved.strategy_index > 0:
+                            locator_fallbacks.append({"step_id": step.step_id,
+                                                      "strategy_index": resolved.strategy_index,
+                                                      "method": resolved.method.value})
+                    self._log(event)
                     steps_executed += 1
 
                     if step.action == ActionType.CLICK and i + 1 < len(steps) and steps[i + 1].action == ActionType.HANDLE_DIALOG:
@@ -358,15 +434,36 @@ class ReplayExecutor:
                     last_step_id = steps[i].step_id
                     i += 1
 
+                # A known outcome can also follow the LAST step (there is no
+                # "next iteration" to check it in).
+                if outcome == ReplayOutcome.SUCCESS and last_step_id:
+                    bo = self._check_known_outcomes(page, last_step_id)
+                    if bo:
+                        business_outcome = {"code": bo.code, "message": bo.message}
+                        outcome = ReplayOutcome.BUSINESS_OUTCOME
+                        self._log({"event": "business_outcome", "code": bo.code})
+
+                if outcome == ReplayOutcome.SUCCESS and not self._verify_checkpoint(page, params):
+                    outcome = ReplayOutcome.FAILURE
+                    failure = self._failure(
+                        page, "checkpoint", expected=self.artifact.checkpoint.description,
+                        observed=f"url={self._safe_url(page)}",
+                        message="All steps executed without error, but the declared checkpoint "
+                                "was not satisfied afterward.", event="checkpoint_failed")
+
+                # SUCCESS promises the declared outputs. One that was never
+                # extracted, or doesn't coerce to its declared type, is a
+                # broken contract — not a success with a hole in it.
                 if outcome == ReplayOutcome.SUCCESS:
-                    if not self._verify_checkpoint(page, params):
+                    bad = [f.name for f in self.artifact.output_schema
+                           if f.name not in outputs or coerce_output_value(outputs[f.name], f.type) is None]
+                    if bad:
                         outcome = ReplayOutcome.FAILURE
-                        failure = {
-                            "step_id": "checkpoint", "expected": self.artifact.checkpoint.description,
-                            "observed": f"url={page.url}",
-                            "message": "All steps executed without error, but the declared checkpoint "
-                                       "was not satisfied afterward.",
-                        }
+                        failure = self._failure(
+                            page, "outputs", expected=f"declared outputs {[f.name for f in self.artifact.output_schema]}",
+                            observed=f"missing or not coercible to declared type: {bad}",
+                            message="Checkpoint held, but the run did not produce every declared output.",
+                            event="outputs_incomplete")
 
             except RunInterrupted as e:
                 # Tier 2 #7's "interrupt". Caught explicitly, right here —
@@ -384,22 +481,44 @@ class ReplayExecutor:
                 interrupted = InterruptDetail(step_id=current_step_id or "unknown", reason=e.reason)
                 self._log({"event": "run_interrupted_caught", "detail": e.reason, "screenshot": shot})
             except LocatorResolutionError as e:
-                shot = self._screenshot(page, "failure")
                 outcome = ReplayOutcome.FAILURE
-                failure = {
-                    "step_id": current_step_id or "unknown", "expected": str(e.spec.strategies[0].value),
-                    "observed": "; ".join(e.attempts), "message": str(e),
-                }
-                self._log({"event": "locator_resolution_failed", "detail": str(e), "screenshot": shot})
+                failure = self._failure(
+                    page, current_step_id,
+                    expected="exactly one visible element matching one of: "
+                             + " | ".join(describe(st) for st in e.spec.strategies),
+                    observed="; ".join(e.attempts) + f" (url={self._safe_url(page)})",
+                    message=str(e), event="locator_resolution_failed")
+            except StepAssertionFailed as e:
+                outcome = ReplayOutcome.FAILURE
+                failure = self._failure(page, current_step_id, expected=e.expected, observed=e.observed,
+                                        message="A mid-flow assertion did not hold.", event="assertion_failed")
             except AllowlistViolation as e:
                 outcome = ReplayOutcome.FAILURE
-                failure = {"step_id": current_step_id or "unknown", "expected": "URL within allowlist",
-                           "observed": str(e), "message": "Allowlist violation — execution stopped."}
-                self._log({"event": "allowlist_violation", "detail": str(e)})
+                failure = self._failure(page, current_step_id, expected="URL within allowlist", observed=str(e),
+                                        message="Allowlist violation — execution stopped.",
+                                        event="allowlist_violation")
+            except PlaywrightError as e:
+                # Timeouts, failed navigations (app down, connection reset),
+                # a crashed page: the "slow/failed load" and "outright app
+                # error" class. Hard failure, but a structured one.
+                step = self.step_lookup.get(current_step_id or "")
+                outcome = ReplayOutcome.FAILURE
+                failure = self._failure(
+                    page, current_step_id,
+                    expected=step.intent if step else "session bootstrap (login) to complete",
+                    observed=f"{type(e).__name__}: {str(e).splitlines()[0]} (url={self._safe_url(page)})",
+                    message="A browser action failed or timed out.", event="browser_action_failed")
+            except Exception as e:  # noqa: BLE001 - last-resort backstop; RunInterrupted is a
+                # BaseException and is handled above, so it can never land here.
+                outcome = ReplayOutcome.FAILURE
+                failure = self._failure(
+                    page, current_step_id, expected="step to execute without an internal error",
+                    observed=f"{type(e).__name__}: {e}",
+                    message="Unexpected error inside the replay engine.", event="unexpected_error")
 
             try:
-                final_shot = self._screenshot(page, f"final_{outcome}")
-                self._log({"event": "final_state", "outcome": str(outcome), "screenshot": final_shot})
+                final_shot = self._screenshot(page, f"final_{outcome.value}")
+                self._log({"event": "final_state", "outcome": outcome.value, "screenshot": final_shot})
             except Exception:
                 pass  # page may already be in a bad state; not worth failing the run over
 
@@ -414,11 +533,12 @@ class ReplayExecutor:
             outcome=outcome, artifact_id=self.artifact.artifact_id, artifact_version=self.artifact.version,
             run_id=self.run_id, started_at=started_at, finished_at=datetime.now(timezone.utc),
             outputs=typed_outputs, business_outcome=business_outcome, failure=failure, escalation=escalation,
-            interrupted=interrupted, recovered_steps=recovered_steps, steps_executed=steps_executed,
+            interrupted=interrupted, recovered_steps=recovered_steps, locator_fallbacks=locator_fallbacks,
+            steps_executed=steps_executed,
             evidence_path=f"evidence/replay/{self.run_id}/",
         )
         (self.evidence_dir / "result.json").write_text(result.model_dump_json(indent=2))
-        self._log({"event": "run_finished", "outcome": outcome})
+        self._log({"event": "run_finished", "outcome": outcome.value})
         return result
 
     def _verify_checkpoint(self, page, params: dict) -> bool:

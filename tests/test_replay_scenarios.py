@@ -24,7 +24,15 @@ from tests.fixtures.example_artifact import (  # noqa: E402
 from replay.executor import ReplayExecutor  # noqa: E402
 from escalation.control_channel import ControlChannel  # noqa: E402
 from escalation.simulated_operator import simulate_operator_takeover  # noqa: E402
-from artifacts.schema import ReplayOutcome  # noqa: E402
+from artifacts.schema import (  # noqa: E402
+    ActionType,
+    LocatorMethod,
+    LocatorSpec,
+    LocatorStrategy,
+    ReplayOutcome,
+    Step,
+)
+from guardrails.allowlist import Allowlist  # noqa: E402
 
 EVIDENCE_ROOT = Path("/tmp/cua_replay_test_evidence")
 
@@ -198,6 +206,84 @@ def test_run_interrupted_mid_automation():
     print("PASS: run interrupted mid-automation ->", result.outcome, result.interrupted)
 
 
+def test_hard_failure_unresolvable_locator():
+    """A control that cannot be found is a hard FAILURE carrying step /
+    expected / observed plus a screenshot and a DOM snapshot — not a crash."""
+    artifact = build_lookup_member_balance_fixture()
+    step = artifact.steps[2]  # the Search click
+    step.timeout_ms = 500
+    step.target = LocatorSpec(strategies=[LocatorStrategy(
+        method=LocatorMethod.ROLE, value="button", role_name="No Such Button", reasoning="test: cannot resolve")])
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+    result = ex.run({"member_id": "10001"})
+    assert result.outcome == ReplayOutcome.FAILURE, result.model_dump()
+    assert result.failure.step_id == step.step_id, result.failure
+    assert "No Such Button" in result.failure.expected, result.failure
+    assert (ex.evidence_dir / result.failure.screenshot).exists(), result.failure
+    assert (ex.evidence_dir / result.failure.dom_snapshot).exists(), result.failure
+    print("PASS: hard failure (unresolvable locator) ->", result.outcome, result.failure.step_id)
+
+
+def test_hard_failure_target_app_unreachable():
+    """The app being down fails the login bootstrap. That must come back as
+    a structured FAILURE, not a raw Playwright traceback."""
+    artifact = build_lookup_member_balance_fixture()
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+    ex.allowlist = Allowlist(["127.0.0.1:5999"])
+    result = ex.run({"member_id": "10001"}, base_url="http://127.0.0.1:5999")
+    assert result.outcome == ReplayOutcome.FAILURE, result.model_dump()
+    assert result.failure.step_id == "session_bootstrap", result.failure
+    assert result.steps_executed == 0
+    print("PASS: hard failure (app unreachable) ->", result.outcome, result.failure.observed[:80])
+
+
+def test_missing_declared_output_is_failure():
+    """SUCCESS promises every declared output. Dropping an extract step must
+    not yield a success with a hole in it."""
+    artifact = build_lookup_member_balance_fixture()
+    artifact.steps = [s for s in artifact.steps if s.output_name != "savings_balance"]
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+    result = ex.run({"member_id": "10001"})
+    assert result.outcome == ReplayOutcome.FAILURE, result.model_dump()
+    assert result.failure.step_id == "outputs", result.failure
+    assert "savings_balance" in result.failure.observed, result.failure
+    print("PASS: missing declared output -> FAILURE ->", result.failure.observed)
+
+
+def test_locator_fallback_is_reported():
+    """When the primary strategy stops resolving and a lower-ranked one is
+    used, the run still succeeds but reports it — the drift signal."""
+    artifact = build_lookup_member_balance_fixture()
+    step = artifact.steps[2]  # the Search click
+    step.timeout_ms = 500
+    step.target.strategies.insert(0, LocatorStrategy(
+        method=LocatorMethod.CSS, value="button#renamed-by-vendor", reasoning="test: drifted primary"))
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+    result = ex.run({"member_id": "10001"})
+    assert result.outcome == ReplayOutcome.SUCCESS, result.model_dump()
+    assert [f.step_id for f in result.locator_fallbacks] == [step.step_id], result.locator_fallbacks
+    assert result.locator_fallbacks[0].strategy_index == 1
+    print("PASS: locator fallback reported ->", result.locator_fallbacks)
+
+
+def test_assert_text_step():
+    """ASSERT_TEXT is a real mid-flow checkpoint: passes when the text is
+    there, hard-fails with expected/observed when it is not."""
+    def with_assert(text):
+        artifact = build_lookup_member_balance_fixture()
+        artifact.steps.append(Step(step_id="s_assert", intent="Confirm the member detail page is showing.",
+                                   action=ActionType.ASSERT_TEXT, value_literal=text, timeout_ms=500))
+        return artifact
+
+    ok = ReplayExecutor(with_assert("Alice Rivera"), fresh_evidence_root(), headless=True).run({"member_id": "10001"})
+    assert ok.outcome == ReplayOutcome.SUCCESS, ok.model_dump()
+    bad = ReplayExecutor(with_assert("Text That Is Not There"), fresh_evidence_root(), headless=True).run(
+        {"member_id": "10001"})
+    assert bad.outcome == ReplayOutcome.FAILURE, bad.model_dump()
+    assert bad.failure.step_id == "s_assert", bad.failure
+    print("PASS: assert_text step ->", ok.outcome, "/", bad.outcome, bad.failure.observed[:60])
+
+
 if __name__ == "__main__":
     test_happy_path()
     test_business_outcome_not_found()
@@ -209,4 +295,9 @@ if __name__ == "__main__":
     test_manual_takeover_on_non_risky_step()
     test_escalation_cancelled_reports_failure()
     test_run_interrupted_mid_automation()
+    test_hard_failure_unresolvable_locator()
+    test_hard_failure_target_app_unreachable()
+    test_missing_declared_output_is_failure()
+    test_locator_fallback_is_reported()
+    test_assert_text_step()
     print("\nALL REPLAY SCENARIO TESTS PASSED")
