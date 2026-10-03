@@ -16,7 +16,7 @@ An interface.ai take-home; the brief's seven REPORT headings and the
 
 ```bash
 pip install -r requirements.txt && python -m playwright install chromium
-pytest                         # 47 tests, no API key; starts target_app itself if needed
+pytest                         # 48 tests, no API key; starts target_app itself if needed
 python target_app/app.py       # needed for the CLIs below (port 5055)
 
 python -m agent.run_discovery --capability-name <name> --goal "..." \
@@ -40,7 +40,7 @@ Discovery needs one provider key in `.env` (`.env.example` lists them).
 | `artifacts/repository.py`, `review.py` | Immutable per-version store; the draft -> approved gate and content hash |
 | `replay/` | `locator_resolver.py`, `executor.py` (the engine; handoff logic is `_handoff`) |
 | `guardrails/` | `allowlist.py` (policy), `network.py` (on-the-wire enforcement), `risk_policy.py`, `redaction.py`, `tokenizer.py`, `credentials.py` |
-| `escalation/` | `transport.py` (interface), `control_channel.py` (file-based), `recorder.py` (observes the human), `operator_console.py`, `simulated_operator.py` |
+| `escalation/` | `transport.py` (interface), `control_channel.py` (file-based), `recorder.py` (observes the human), `inpage.py` (hand-back bar in headed runs), `notify.py`, `operator_console.py`, `simulated_operator.py` |
 
 ## Conventions that will bite if skipped
 

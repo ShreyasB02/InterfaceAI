@@ -341,6 +341,53 @@ def test_failure_escalation_handed_back_unfixed_is_hard_failure():
     print("PASS: handed back unfixed -> hard FAILURE ->", result.failure.step_id)
 
 
+def test_hand_back_from_inside_the_browser_window():
+    """The in-page bar is a second front end to the same control channel:
+    the operator acts on the page, then clicks the bar's button, and the run
+    resumes. A script on the page pressing that button, or calling the
+    binding directly, is ignored."""
+    from playwright.sync_api import sync_playwright
+    import time
+
+    artifact, step = _break_search_step(build_lookup_member_balance_fixture())
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True, in_page_controls=True)
+    seen = {}
+
+    def operator(control):
+        time.sleep(0.3)
+        with sync_playwright() as p:
+            page = p.chromium.connect_over_cdp(control.status()["intervention_request"]["cdp_endpoint"]).contexts[0].pages[0]
+            done = page.locator("#__cua_handoff_bar button[data-decision=done]")
+            done.wait_for(state="visible", timeout=5000)
+            seen["reason_shown"] = (page.locator("#__cua_handoff_bar b").inner_text()
+                                        + page.locator("#__cua_handoff_bar span").inner_text())
+            # The page itself trying to hand back: a synthetic click, then the raw binding.
+            page.evaluate("document.querySelector('#__cua_handoff_bar').shadowRoot"
+                          ".querySelector('button[data-decision=done]').click()")
+            page.evaluate("setTimeout(() => window.__cuaHandBack({nonce: 'guessed', decision: 'done'}), 0)")
+            time.sleep(1.2)
+            seen["status_after_forgery"] = control.status()["status"]
+            page.get_by_role("button", name="Search", exact=True).click()
+            time.sleep(0.5)
+            # The page navigated; the bar must have redrawn itself on the new document.
+            page.locator("#__cua_handoff_bar button[data-decision=done]").click()
+            time.sleep(0.5)
+
+    def on_escalation(control, ctx):
+        threading.Thread(target=operator, args=(control,), daemon=True).start()
+
+    result = ex.run({"member_id": "10001"}, escalate_on_failure=True, on_escalation=on_escalation,
+                    escalation_timeout_s=30)
+    assert seen["status_after_forgery"] == "paused_for_human", seen
+    assert "Automation paused" in seen["reason_shown"] and "No Such Button" in seen["reason_shown"], seen
+    assert result.outcome == ReplayOutcome.SUCCESS, result.model_dump()
+    descriptions = [a["description"] for a in result.escalation.human_actions]
+    assert "Clicked 'Search' button" in descriptions, descriptions
+    assert "Handed back from the in-page controls." in descriptions, descriptions
+    assert not any("continue" in d.lower() and "Clicked" in d for d in descriptions), "the bar's own buttons are not recorded"
+    print("PASS: handed back from the in-page bar; forged hand-back ignored ->", result.outcome)
+
+
 def _as_draft(artifact):
     artifact.status = ArtifactStatus.DRAFT
     artifact.review = None

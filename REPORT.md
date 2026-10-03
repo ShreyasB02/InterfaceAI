@@ -217,7 +217,11 @@ otherwise it is never written down and that step is handed to a human at
 replay.
 
 **Handing back.** The operator states whether they completed the paused
-step or want automation to run it. The run then verifies the checkpoint as
+step or want automation to run it, from the console or, in a headed run,
+from a bar drawn in the browser window itself. Both write to the same
+`ControlTransport`. The page is not trusted to press those buttons: the bar
+ignores script-made clicks and its binding requires a per-intervention
+nonce that page scripts can't read. The run then verifies the checkpoint as
 usual. A failed step is escalated once.
 
 **Mocked:** the console is a bare page, and a person drives the browser

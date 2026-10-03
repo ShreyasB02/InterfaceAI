@@ -103,18 +103,29 @@ A run hands its live browser session to a person when:
 - a replay step is marked as needing a human;
 - a replay step fails, if you passed `--escalate-on-failure`.
 
-To resolve one by hand, start the console and open the paused run:
+When a run pauses, the terminal prints why, where to act, and how to hand
+back. The simplest way to resolve one by hand is a headed run:
 
 ```bash
-python -m escalation.operator_console
-# then open http://127.0.0.1:5056/console?run_dir=<the run's evidence folder>
+python -m replay.run_replay --capability-name open_sub_account --attended --headed \
+  --param member_id=10002 --param nickname="Rainy Day"
 ```
 
-The console shows why the run stopped, a screenshot, and the CDP endpoint.
-Run with `--headed` and use the browser window, or open `chrome://inspect`,
-add the endpoint under "Discover network targets" and click "inspect". Your
-clicks and field edits on the page are recorded automatically. Then hand
-back from the console, saying whether you completed the paused step.
+Act in the browser window that opens. A bar at the bottom of the page says
+why the run stopped and has the hand-back buttons: "I completed this step",
+"automation runs this step", or "Cancel". Your clicks and field edits on the
+page are recorded automatically.
+
+For a headless or remote run there is no window, so use the operator
+console, which lists every run waiting on a human:
+
+```bash
+python -m escalation.operator_console          # http://127.0.0.1:5056
+```
+
+It shows the same request plus a screenshot and the run's CDP endpoint; open
+`chrome://inspect`, add that endpoint under "Discover network targets" and
+click "inspect" to drive the page, then hand back from the console.
 
 Without a person present, `--simulate-operator` attaches to the same session
 over CDP and performs scripted actions. Here the goal withholds a decision,
@@ -157,7 +168,7 @@ redacted; credentials never reach an artifact, a log, or the model.
 pytest
 ```
 
-47 tests, about a minute, no API key and nothing to start first: the model's
+48 tests, about a minute, no API key and nothing to start first: the model's
 decisions are scripted, the target app is started by the test session if it
 isn't running, and output goes to `/tmp`, never to `evidence/`. Everything
 else is the real code path, including the CDP handoff.

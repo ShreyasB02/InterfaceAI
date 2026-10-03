@@ -31,6 +31,7 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import Dialog, Page, sync_playwright
 
+from escalation.inpage import InPageHandBack
 from escalation.recorder import HumanActionRecorder
 from guardrails.allowlist import Allowlist
 from guardrails.network import NetworkGuard
@@ -102,7 +103,7 @@ class ActionRecord:
 
 class BrowserSurface:
     def __init__(self, base_url: str, evidence_dir: Path, allowlist: Allowlist, headless: bool = True,
-                 cdp_port: int = 0):
+                 cdp_port: int = 0, in_page_controls: Optional[bool] = None):
         self.base_url = base_url.rstrip("/")
         self.evidence_dir = evidence_dir
         self.allowlist = allowlist
@@ -119,6 +120,8 @@ class BrowserSurface:
         self._cdp_port = cdp_port
         self.recorder = HumanActionRecorder()
         self.guard = NetworkGuard(allowlist)
+        show_controls = (not headless) if in_page_controls is None else in_page_controls
+        self.inpage = InPageHandBack() if show_controls else None
 
     def __enter__(self) -> "BrowserSurface":
         self._pw = sync_playwright().start()
@@ -127,6 +130,8 @@ class BrowserSurface:
         self.page = self._browser.new_page()
         self.page.on("dialog", self._on_dialog)
         self.recorder.install(self.page)
+        if self.inpage:
+            self.inpage.install(self.page)
         self.guard.install(self.page.context)
         (self.evidence_dir / "screenshots").mkdir(parents=True, exist_ok=True)
         return self

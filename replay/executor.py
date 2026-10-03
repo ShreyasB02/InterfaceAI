@@ -39,6 +39,7 @@ from artifacts.schema import (
 )
 from artifacts.validate import validate_required_params
 from escalation.control_channel import ControlChannel
+from escalation.inpage import InPageHandBack
 from escalation.recorder import HumanActionRecorder
 from escalation.transport import (
     ControlSignal,
@@ -71,7 +72,8 @@ class StepAssertionFailed(Exception):
 
 class ReplayExecutor:
     def __init__(self, artifact: CapabilityArtifact, evidence_root: Path,
-                 headless: bool = True, cdp_port: Optional[int] = None):
+                 headless: bool = True, cdp_port: Optional[int] = None,
+                 in_page_controls: Optional[bool] = None):
         self.artifact = artifact
         self.headless = headless
         self.cdp_port = cdp_port or free_local_port()  # one per run; see free_local_port()
@@ -89,6 +91,10 @@ class ReplayExecutor:
         self._pending_dialog_message: Optional[str] = None
         self._escalation_in_progress = False
         self.recorder = HumanActionRecorder()
+        # Hand-back buttons in the browser window itself. Default: only when
+        # there is a window for a person to see (escalation/inpage.py).
+        show_controls = (not headless) if in_page_controls is None else in_page_controls
+        self.inpage = InPageHandBack() if show_controls else None
 
     # -- logging / evidence ----------------------------------------------
 
@@ -299,6 +305,8 @@ class ReplayExecutor:
         # for — but the allowlist still binds the session they are driving.
         self.guard.begin(allow_risky=True)
         self.recorder.start()
+        if self.inpage:
+            self.inpage.show(control, reason)
         try:
             if on_escalation:
                 on_escalation(control, {"step_id": step.step_id, "run_dir": str(self.evidence_dir), "kind": kind})
@@ -311,6 +319,8 @@ class ReplayExecutor:
             # Also runs when RunInterrupted propagates: control is taken
             # back and recording stops whichever way the wait ended.
             observed = self.recorder.stop()
+            if self.inpage:
+                self.inpage.hide()
             self._escalation_in_progress = False
 
         observed_evidence = [a.to_evidence(params) for a in observed]
@@ -408,6 +418,8 @@ class ReplayExecutor:
             page = browser.new_page()
             page.on("dialog", self._on_dialog)
             self.recorder.install(page)
+            if self.inpage:
+                self.inpage.install(page)
             self.guard.install(page.context)
             escalated_failures: set[str] = set()
 

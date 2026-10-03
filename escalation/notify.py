@@ -28,8 +28,10 @@ def announce_pause(control, ctx: dict, headed: bool) -> None:
         f"PAUSED — waiting for a human ({req.get('kind', 'intervention')})\n"
         f"  Why:      {req.get('reason')}\n"
         f"  Act in:   {where}\n"
-        f"  Then:     hand back at {console_url(ctx['run_dir'])}\n"
-        "            (start the console first: python -m escalation.operator_console)\n"
+        + ("  Then:     use the bar at the bottom of that window to hand back\n"
+           f"            (or the console: {console_url(ctx['run_dir'])})\n" if headed else
+           f"  Then:     hand back at {console_url(ctx['run_dir'])}\n"
+           "            (start the console first: python -m escalation.operator_console)\n")
         + "=" * 72,
         file=sys.stderr, flush=True,
     )

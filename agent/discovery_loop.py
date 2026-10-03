@@ -570,6 +570,8 @@ class DiscoveryRun:
         waited_from = time.time()
         browser.guard.begin(allow_risky=True)  # the human may act on risk; the allowlist still binds them
         browser.recorder.start()
+        if browser.inpage:
+            browser.inpage.show(self.control, reason)
         try:
             if self.on_escalation:
                 self.on_escalation(self.control, {"turn": self._turn, "run_dir": str(self.evidence_dir), "kind": kind})
@@ -582,6 +584,8 @@ class DiscoveryRun:
             raise DiscoveryFailed(f"Escalation cancelled by an operator: {e}", self.run_id) from e
         finally:
             observed = browser.recorder.stop()
+            if browser.inpage:
+                browser.inpage.hide()
             self._human_wait_s += time.time() - waited_from
 
         observed_evidence = [a.to_evidence(self.params) for a in observed]
