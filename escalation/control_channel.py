@@ -16,6 +16,7 @@ State machine (single writer at a time, statuses are the contract):
   human_active          -> an operator (console or simulator) has attached
   resume_requested       -> the operator signaled they're done; replay may
                           proceed
+  ended                  -> the run is over; nothing is waiting on anyone
 
 Independent of `status` above, a `signal` field can be set at
 any time by an operator to ask for one of three things without waiting for
@@ -166,6 +167,13 @@ class ControlChannel(ControlTransport):
             if timeout_s is not None and (time.time() - start) > timeout_s:
                 raise InterventionTimedOut(f"No resume signal within {timeout_s}s for run {self.run_id}")
             idle(poll_interval_s)
+
+    def end(self, outcome: str) -> None:
+        state = self._read()
+        state["status"] = "ended"
+        state["outcome"] = outcome
+        state.pop("signal", None)
+        self._write(state)
 
     def status(self) -> dict:
         return self._read()

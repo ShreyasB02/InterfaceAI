@@ -40,6 +40,7 @@ app = Flask(__name__)
 PAGE = """<!doctype html>
 <html><body style="font-family: sans-serif; max-width: 700px; margin: 2em auto;">
 <h2>Operator Console (mock)</h2>
+<p><a href="/">&larr; all waiting runs</a></p>
 <p><b>Run:</b> {run_id}<br><b>Status:</b> {status}{signal_note}</p>
 {body}
 <hr>
@@ -89,6 +90,41 @@ IDLE = """
 """
 
 
+INDEX = """<!doctype html>
+<html><body style="font-family: sans-serif; max-width: 900px; margin: 2em auto;">
+<h2>Operator Console (mock)</h2>
+<h3>Runs waiting for a human</h3>
+{waiting}
+<p style="color:#666;">Scanning <code>{root}</code>. This console only records your decision and hands
+control back. To act on the page itself, use the browser window the run opened (<code>--headed</code>),
+or attach to the run's CDP endpoint from <code>chrome://inspect</code> &mdash; that endpoint is the
+run's own port, shown on its page, not this console's.</p>
+</body></html>"""
+
+
+def _evidence_root() -> Path:
+    return Path(os.environ.get("EVIDENCE_ROOT", "evidence")).resolve()
+
+
+@app.route("/")
+def index():
+    """Every run whose control channel says it is waiting for someone."""
+    rows = []
+    for control_file in sorted(_evidence_root().glob("*/*/control.json"), reverse=True):
+        try:
+            state = ControlChannel(control_file.parent.name, control_file.parent).status()
+        except Exception:  # noqa: BLE001 - a half-written or foreign file is not this page's problem
+            continue
+        if state.get("status") not in ("paused_for_human", "human_active"):
+            continue
+        req = state.get("intervention_request") or {}
+        rows.append(
+            f'<li><a href="/console?run_dir={escape(str(control_file.parent))}">{escape(control_file.parent.name)}</a>'
+            f' &mdash; {escape(str(req.get("kind", "")))}: {escape(str(req.get("reason", "")))}</li>')
+    waiting = f"<ul>{''.join(rows)}</ul>" if rows else "<p>None right now.</p>"
+    return INDEX.format(waiting=waiting, root=escape(str(_evidence_root())))
+
+
 @app.route("/console")
 def console():
     run_dir = Path(request.args["run_dir"])
@@ -96,6 +132,8 @@ def console():
     state = control.status()
     req = state.get("intervention_request")
     body = IDLE.format(run_dir=str(run_dir))
+    if state.get("status") == "ended":
+        body = f"<p>This run has ended ({escape(str(state.get('outcome')))}). Nothing is waiting on you.</p>"
     if req and state.get("status") in ("paused_for_human", "human_active"):
         fields = {"kind": "risk_confirmation", "goal": "", "current_url": "", **req}
         body = PENDING.format(run_dir=str(run_dir), **{k: escape(str(v)) for k, v in fields.items()})

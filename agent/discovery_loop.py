@@ -61,6 +61,7 @@ from escalation.transport import (
     InterventionKind,
     InterventionTimedOut,
     RunInterrupted,
+    free_local_port,
 )
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.credentials import operator_credentials
@@ -202,7 +203,7 @@ class DiscoveryRun:
                  params: dict[str, str], outputs: list[dict], evidence_root: Path,
                  param_types: Optional[dict[str, str]] = None, headless: bool = True,
                  vision: bool = True, llm=None, artifact_version: str = "1.0.0",
-                 escalation_timeout_s: Optional[float] = 600, on_escalation=None, cdp_port: int = 9334,
+                 escalation_timeout_s: Optional[float] = 600, on_escalation=None, cdp_port: Optional[int] = None,
                  risk_gate: bool = True):
         self.capability_name = capability_name
         self.goal = goal
@@ -250,7 +251,7 @@ class DiscoveryRun:
         self.control = ControlChannel(self.run_id, self.evidence_dir)
         self.escalation_timeout_s = escalation_timeout_s
         self.on_escalation = on_escalation
-        self.cdp_port = cdp_port
+        self.cdp_port = cdp_port or free_local_port()
         self.interventions: list[dict] = []
         self._human_wait_s = 0.0
 
@@ -369,6 +370,16 @@ class DiscoveryRun:
             return
 
     def run(self) -> CapabilityArtifact:
+        outcome = "failed"
+        try:
+            artifact = self._run()
+            outcome = "completed"
+            return artifact
+        finally:
+            # However the run ended, nothing is waiting on a human any more.
+            self.control.end(outcome)
+
+    def _run(self) -> CapabilityArtifact:
         with BrowserSurface(self.base_url, self.evidence_dir, self.allowlist, headless=self.headless,
                             cdp_port=self.cdp_port) as browser:
             self._bootstrap_session(browser)
@@ -685,10 +696,20 @@ class DiscoveryRun:
                 obs = browser.observe(f"turn{self._turn}_pre_click_approved")
             rec = browser.click(tool_input["index"], obs.elements, on_dialog=tool_input.get("on_dialog"),
                                 allow_risky=declared_irreversible)
+            obs2 = browser.observe(f"turn{self._turn}_post_click")
+            if rec.dialog_message and rec.dialog_action != "accept":
+                # The app asked for confirmation and it was declined (the
+                # default for a dialog nobody planned for). Nothing was
+                # committed, so there is nothing to record: a declined
+                # confirmation is not a step of the flow.
+                note = (f"Clicked, but a confirmation dialog appeared ({rec.dialog_message!r}) and was "
+                        "dismissed, so nothing was committed. If you do intend this irreversible action, "
+                        "click it again with on_dialog='accept'.")
+                self._log({"event": "dialog_dismissed", "turn": self._turn, "message": rec.dialog_message})
+                return _format_observation_for_model(obs2, self.tokenizer, note), None, None, obs2
             note = "Clicked."
             if rec.dialog_message:
-                note += f" A confirmation dialog appeared ({rec.dialog_message!r}) and was {rec.dialog_action}ed."
-            obs2 = browser.observe(f"turn{self._turn}_post_click")
+                note += f" A confirmation dialog appeared ({rec.dialog_message!r}) and was accepted."
             return _format_observation_for_model(obs2, self.tokenizer, note), "click", rec, obs2
 
         if name == "fill":

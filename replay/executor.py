@@ -46,6 +46,7 @@ from escalation.transport import (
     InterventionKind,
     InterventionTimedOut,
     RunInterrupted,
+    free_local_port,
 )
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.credentials import operator_credentials
@@ -55,7 +56,6 @@ from guardrails.risk_policy import needs_escalation, replay_refusal
 from guardrails.safety import safe_screenshot
 from replay.locator_resolver import LocatorResolutionError, ResolvedLocator, build_locator, describe, resolve
 
-DEFAULT_CDP_PORT = 9333
 OUTCOME_PROBE_TIMEOUT_MS = 400
 
 
@@ -71,10 +71,10 @@ class StepAssertionFailed(Exception):
 
 class ReplayExecutor:
     def __init__(self, artifact: CapabilityArtifact, evidence_root: Path,
-                 headless: bool = True, cdp_port: int = DEFAULT_CDP_PORT):
+                 headless: bool = True, cdp_port: Optional[int] = None):
         self.artifact = artifact
         self.headless = headless
-        self.cdp_port = cdp_port
+        self.cdp_port = cdp_port or free_local_port()  # one per run; see free_local_port()
         self.allowlist = Allowlist.from_env()
 
         self.run_id = f"replay_{artifact.name}_{datetime.now().strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -477,8 +477,12 @@ class ReplayExecutor:
                         control.clear_signal()  # no-op if no signal was pending
                         if needs_human:
                             kind = InterventionKind.RISK_CONFIRMATION
-                            reason = (f"Step {step.step_id} ({step.intent}) is {step.risk_level.value} and "
-                                      "requires a human before proceeding.")
+                            if step.action == ActionType.FILL and self._resolve_value(step, params) is None:
+                                reason = (f"Step {step.step_id} needs a value only a person can supply: "
+                                          f"{step.intent}. Enter it on the page, then hand back.")
+                            else:
+                                reason = (f"Step {step.step_id} ({step.intent}) is {step.risk_level.value} and "
+                                          "requires a human before proceeding.")
                         else:
                             kind = InterventionKind.TAKEOVER
                             reason = sig.get("reason") or "Operator requested manual takeover."
@@ -674,6 +678,7 @@ class ReplayExecutor:
             evidence_path=f"evidence/replay/{self.run_id}/",
         )
         (self.evidence_dir / "result.json").write_text(result.model_dump_json(indent=2))
+        control.end(outcome.value)
         self._log({"event": "run_finished", "outcome": outcome.value})
         return result
 

@@ -48,6 +48,7 @@ from dotenv import load_dotenv
 from artifacts import repository
 from artifacts.validate import validate_required_params
 from escalation.control_channel import ControlChannel
+from escalation.notify import announce_pause
 from escalation.simulated_operator import parse_action, simulate_operator_takeover
 from replay.executor import ReplayExecutor
 
@@ -191,6 +192,14 @@ def main():
                 reason=f"Simulated operator interrupted the run {args.simulate_interrupt_after}s in."
             )
         threading.Thread(target=_request_interrupt, daemon=True).start()
+
+    simulate_hook = on_escalation
+
+    def on_escalation(control, ctx):  # noqa: ANN001, F811
+        if simulate_hook:
+            simulate_hook(control, ctx)  # a scripted operator answers; nothing for a person to do
+        else:
+            announce_pause(control, ctx, headed=args.headed)
 
     print(f"Replaying {artifact.name} v{artifact.version} (run {executor.run_id})")
     try:

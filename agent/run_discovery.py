@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from agent.discovery_loop import DiscoveryFailed, DiscoveryRun
 from agent.llm import LLMClient, LLMConfigError
 from artifacts import repository
+from escalation.notify import announce_pause
 from escalation.simulated_operator import parse_action, simulate_operator_takeover
 from escalation.transport import RunInterrupted
 from guardrails.allowlist import AllowlistViolation
@@ -90,7 +91,9 @@ def main():
         print(f"LLM configuration error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    on_escalation = None
+    def on_escalation(control, ctx):  # noqa: ANN001
+        announce_pause(control, ctx, headed=args.headed)
+
     if args.simulate_operator:
         try:
             operator_actions = [parse_action(a) for a in args.simulate_operator]

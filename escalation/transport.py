@@ -70,8 +70,19 @@ specific to the file-based one:
 """
 from __future__ import annotations
 
+import socket
 from abc import ABC, abstractmethod
 from typing import Callable, Optional
+
+
+def free_local_port() -> int:
+    """A port nothing is listening on, for a run's browser debugging
+    endpoint. Each run gets its own: with a fixed port, a second run's
+    browser fails to bind, and an operator who then attaches to "the" port
+    reaches the FIRST run's session and acts on the wrong one."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 class InterventionTimedOut(Exception):
@@ -171,6 +182,11 @@ class ControlTransport(ABC):
         servicing its browser connection (see escalation/recorder.py). Raises
         InterventionTimedOut on timeout, EscalationAbandoned on cancel, or
         RunInterrupted on interrupt."""
+
+    @abstractmethod
+    def end(self, outcome: str) -> None:
+        """The run is over, however it ended. Nothing is waiting on a human
+        any more, even if it stopped mid-intervention."""
 
     @abstractmethod
     def status(self) -> dict:

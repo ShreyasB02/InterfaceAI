@@ -108,7 +108,12 @@ def test_model_requests_human_for_a_decision():
         ("click", "Search"),
         ("click", "View Member"),
         ("click", "Open Sub-Account"),
-        ("request_human", {"reason": "The nickname and deposit amount are a supervisor's decision."}),
+        # What a real model did here: fill the field it has a param for,
+        # then ask for the one it doesn't; and click Confirm once without
+        # planning for the dialog before doing it properly.
+        ("fill", "nickname", "Vacation Fund"),
+        ("request_human", {"reason": "The deposit amount is a supervisor's decision."}),
+        ("click", "Confirm & Open Account"),
         ("click", "Confirm & Open Account", "accept"),
         ("extract_field", {"label": "New Account Number", "output_name": "new_account_number"}),
         ("finish_success", {"summary": "Opened a sub-account.", "checkpoint_description": "Success banner shown."}),
@@ -126,9 +131,18 @@ def test_model_requests_human_for_a_decision():
     artifact = run.run()
 
     human = [s for s in artifact.steps if s.origin == "human"]
-    assert [s.action.value for s in human] == ["fill", "fill", "click"], [(s.action, s.intent) for s in human]
-    nickname, deposit, cont = human
-    assert nickname.value_param == "nickname" and not nickname.requires_confirmation
+    # The operator re-entered the nickname the model had already typed.
+    # Same value, so not a step: only what they changed is recorded.
+    assert [s.action.value for s in human] == ["fill", "click"], [(s.action, s.intent) for s in human]
+    deposit, cont = human
+    nickname_steps = [s for s in artifact.steps if s.value_param == "nickname"]
+    assert len(nickname_steps) == 1 and nickname_steps[0].origin == "model", nickname_steps
+    # The first Confirm click hit a dialog nobody planned for; it was
+    # dismissed and committed nothing, so it is not a step of the flow.
+    confirm_clicks = [s for s in artifact.steps if s.action.value == "click"
+                      and s.target.strategies[0].role_name == "Confirm & Open Account"]
+    assert len(confirm_clicks) == 1, [s.intent for s in artifact.steps]
+    assert sum(s.action.value == "handle_dialog" for s in artifact.steps) == 1
     # The deposit isn't a declared input: its value is never stored, and the
     # step is handed to a human at replay instead.
     assert deposit.value_param is None and deposit.value_literal is None
@@ -154,10 +168,13 @@ def test_model_requests_human_for_a_decision():
     order = [e["event"] for e in events]
     assert order.index("risky_action_approved") > order.index("escalation_requested"), order
     observed = [a["description"] for a in resumed["human_actions"] if a["source"] == "observed"]
-    assert "Set the 'Sub-Account Nickname' field to the supplied nickname" in observed, observed
+    assert "Clicked 'Continue' button" in observed, observed
+    assert not any("Nickname" in d for d in observed), observed
+    assert "dialog_dismissed" in [e["event"] for e in events]
     assert not any("173.25" in d for d in observed), observed
     control = json.loads((run.evidence_dir / "control.json").read_text())
-    assert control["status"] == "automation" and control["intervention_request"]["goal"] == run.goal
+    assert control["status"] == "ended" and control["outcome"] == "completed"
+    assert control["intervention_request"]["goal"] == run.goal
     print("PASS: model requested a human; operator's actions observed and recorded as steps ->", observed)
 
 

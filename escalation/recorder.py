@@ -61,6 +61,15 @@ RECORDER_JS = """
     const el = e.target.closest && e.target.closest(CLICKABLE);
     if (el) report({kind: 'click', ...meta(el)});
   }, true);
+  // Typing fires `input` immediately; `change` only fires when the field
+  // loses focus. `input` is reported so this side always knows the value a
+  // field currently holds and who put it there (see _automation_values).
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.matches && el.matches('input, select, textarea')) {
+      report({kind: 'input', ...meta(el), button_value: '', value: el.value});
+    }
+  }, true);
   document.addEventListener('change', (e) => {
     const el = e.target;
     if (el.matches && el.matches('input, select, textarea')) {
@@ -121,8 +130,10 @@ class HumanActionRecorder:
         self._actions: list[ObservedAction] = []
         self._page = None
         # Field values as automation left them. A field automation filled
-        # fires a native `change` when it later loses focus — possibly on
-        # the human's first click — and that must not be credited to them.
+        # only fires its native `change` when it later loses focus —
+        # possibly on the human's first click — and that must not be
+        # credited to them. Nor is a human re-entering the value automation
+        # already put there a change worth recording.
         self._automation_values: dict[str, str] = {}
 
     def install(self, page) -> None:
@@ -153,14 +164,16 @@ class HumanActionRecorder:
         self._page.wait_for_timeout(seconds * 1000)
 
     def _on_report(self, source, payload: dict) -> None:
-        if not isinstance(payload, dict) or payload.get("kind") not in ("click", "fill"):
+        if not isinstance(payload, dict) or payload.get("kind") not in ("click", "fill", "input"):
             return
         kind = payload["kind"]
-        if kind == "fill":
+        if kind in ("fill", "input"):
             field_key = payload.get("name") or payload.get("label") or ""
             if not self._active:
                 self._automation_values[field_key] = payload.get("value")
                 return
+            if kind == "input":
+                return  # the human is mid-typing; the `change` that follows is the record
             if self._automation_values.get(field_key) == payload.get("value"):
                 return
         if not self._active:

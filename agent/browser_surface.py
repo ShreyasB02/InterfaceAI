@@ -102,7 +102,7 @@ class ActionRecord:
 
 class BrowserSurface:
     def __init__(self, base_url: str, evidence_dir: Path, allowlist: Allowlist, headless: bool = True,
-                 cdp_port: int = 9334):
+                 cdp_port: int = 0):
         self.base_url = base_url.rstrip("/")
         self.evidence_dir = evidence_dir
         self.allowlist = allowlist

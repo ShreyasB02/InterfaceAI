@@ -225,8 +225,7 @@ through the headed window or `chrome://inspect`, not an embedded view. A
 scripted operator stands in for a person's decisions in the evidence; the
 attach, transfer, observation and resume are the real mechanism.
 **Limits:** the recorder misses keyboard-only navigation; the transport is
-file-backed, so console and run share a filesystem; one debugging port per
-run.
+file-backed, so console and run share a filesystem.
 
 ## 6. Safety
 
@@ -276,7 +275,7 @@ data). The policy knows routes and verbs, not business meaning.
 - **Step-level postconditions** and a richer discovered checkpoint (§2).
 - **Drift aggregation**: the per-run signal exists, the trend doesn't.
 - **Scale infrastructure**: queueing, a database, a networked control
-  transport, a port per concurrent run.
+  transport.
 - **Stretch goals**: the approval gate is built. Code generation,
   stability scoring and LLM-assisted single-step recovery are not.
 
