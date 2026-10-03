@@ -54,15 +54,61 @@ def redact_field_value(field_name: str, field_type: str, value: str) -> str:
     return redact_text(value)
 
 
+def redact_value(value, key: str = ""):
+    """Redact any JSON-shaped value, recursing into dicts and lists. A string
+    under a denylisted key is replaced whole; every other string is
+    pattern-redacted."""
+    if isinstance(value, str):
+        if key and any(bad in key.lower() for bad in FIELD_NAME_DENYLIST):
+            return "[REDACTED]"
+        return redact_text(value)
+    if isinstance(value, dict):
+        return {k: redact_value(v, str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_value(v, key) for v in value]
+    return value
+
+
 def redact_dict(d: dict) -> dict:
-    """Shallow redaction for a log event's tool_input / outputs dict."""
-    out = {}
-    for k, v in d.items():
-        if isinstance(v, str):
-            if any(bad in k.lower() for bad in FIELD_NAME_DENYLIST):
-                out[k] = "[REDACTED]"
-            else:
-                out[k] = redact_text(v)
-        else:
-            out[k] = v
-    return out
+    """Redact a whole log event (or any dict), at every depth."""
+    return redact_value(d)
+
+
+def scrub_known(text: str, known: dict[str, str]) -> str:
+    """Replace literal values this run knows to be record data — e.g. a
+    member's name it just read off the page — with their label. Patterns
+    can't recognise a name; knowing where it came from can. Longest first,
+    so a value that contains another is replaced whole."""
+    if not text:
+        return text
+    for value in sorted(known, key=len, reverse=True):
+        if len(value) >= 3:
+            text = text.replace(value, known[value])
+    return text
+
+
+def scrub_known_value(value, known: dict[str, str]):
+    """scrub_known over every string in a JSON-shaped value (keys untouched)."""
+    if isinstance(value, str):
+        return scrub_known(value, known)
+    if isinstance(value, dict):
+        return {k: scrub_known_value(v, known) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [scrub_known_value(v, known) for v in value]
+    return value
+
+
+def generalize_for_artifact(text: str, params: dict, extracted: dict) -> str:
+    """Make model-written text safe and reusable before it goes into an
+    artifact: the description and checkpoint a model writes after one run
+    naturally quote that run's record ("Alice Rivera", "$8150.32"). An
+    artifact describes the capability, not the record it was recorded on.
+
+    Order matters: value-shape redaction first (so an account number that
+    embeds a param value is caught whole), then the run's extracted outputs
+    and input params become {placeholders}."""
+    if not text:
+        return text
+    text = redact_text(text)
+    text = scrub_known(text, {str(v): "{" + k + "}" for k, v in extracted.items() if v})
+    return scrub_known(text, {str(v): "{" + k + "}" for k, v in params.items() if v})

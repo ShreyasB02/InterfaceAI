@@ -77,10 +77,17 @@ class ScriptedLLM:
                            provider="scripted", model=self.model)
 
 
-def _operator(actions):
+def _operator(actions, on_risk_confirmation="approve"):
+    """Scripted operator. A stuck/takeover request gets `actions`. A request
+    to confirm an irreversible action is approved by handing the step back
+    untouched (step_done=False), which is the 'go ahead' answer."""
     def on_escalation(control, ctx):
-        threading.Thread(target=simulate_operator_takeover, args=(control,),
-                         kwargs={"actions": actions, "reaction_delay_s": 0.3}, daemon=True).start()
+        if ctx["kind"] == "risk_confirmation":
+            assert on_risk_confirmation == "approve"
+            kwargs = {"actions": [], "step_done": False, "reaction_delay_s": 0.3}
+        else:
+            kwargs = {"actions": actions, "reaction_delay_s": 0.3}
+        threading.Thread(target=simulate_operator_takeover, args=(control,), kwargs=kwargs, daemon=True).start()
     return on_escalation
 
 
@@ -120,7 +127,11 @@ def test_model_requests_human_for_a_decision():
     assert deposit.value_param is None and deposit.value_literal is None
     assert deposit.requires_confirmation and deposit.risk_level == RiskLevel.RISKY
     assert cont.target.strategies[0].role_name == "Continue"
-    assert artifact.provenance.human_interventions == 1
+    # Two handoffs: the model's own request, then the risk gate on the
+    # irreversible confirm click, which the operator approved.
+    assert artifact.provenance.human_interventions == 2
+    confirm = next(s for s in artifact.steps if s.requires_confirmation and s.action.value == "click")
+    assert confirm.origin == "model" and confirm.risk_level == RiskLevel.IRREVERSIBLE
     assert "173.25" not in artifact.model_dump_json(), "a human-typed, undeclared value must not be persisted"
 
     # Automation resumed on the same session and finished the goal itself.
@@ -131,6 +142,10 @@ def test_model_requests_human_for_a_decision():
     requested = next(e for e in events if e["event"] == "escalation_requested")
     resumed = next(e for e in events if e["event"] == "escalation_resumed")
     assert requested["kind"] == "stuck" and "supervisor" in requested["reason"]
+    gate = [e for e in events if e["event"] == "escalation_requested"][1]
+    assert gate["kind"] == "risk_confirmation" and "Confirm & Open Account" in gate["reason"], gate
+    order = [e["event"] for e in events]
+    assert order.index("risky_action_approved") > order.index("escalation_requested"), order
     observed = [a["description"] for a in resumed["human_actions"] if a["source"] == "observed"]
     assert "Set the 'Sub-Account Nickname' field to the supplied nickname" in observed, observed
     assert not any("173.25" in d for d in observed), observed

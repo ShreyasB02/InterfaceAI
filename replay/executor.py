@@ -33,6 +33,7 @@ from artifacts.schema import (
     RecoverablePattern,
     RecoveryAction,
     ReplayOutcome,
+    RiskLevel,
     ReplayResult,
     Step,
 )
@@ -47,13 +48,13 @@ from escalation.transport import (
     RunInterrupted,
 )
 from guardrails.allowlist import Allowlist, AllowlistViolation
+from guardrails.credentials import operator_credentials
+from guardrails.network import NetworkGuard, RiskyActionBlocked
 from guardrails.redaction import redact_dict, redact_text
 from guardrails.risk_policy import needs_escalation, replay_refusal
 from guardrails.safety import safe_screenshot
 from replay.locator_resolver import LocatorResolutionError, ResolvedLocator, build_locator, describe, resolve
 
-EMPLOYEE_ID = "EMP001"
-PASSCODE = "demo1234"
 DEFAULT_CDP_PORT = 9333
 OUTCOME_PROBE_TIMEOUT_MS = 400
 
@@ -92,9 +93,9 @@ class ReplayExecutor:
     # -- logging / evidence ----------------------------------------------
 
     def _log(self, event: dict):
-        if "tool_input" in event and isinstance(event["tool_input"], dict):
-            event = {**event, "tool_input": redact_dict(event["tool_input"])}
-        event = {"ts": datetime.now(timezone.utc).isoformat(), **event}
+        # Every field of every event, at every depth — not only the ones
+        # remembered to be sensitive.
+        event = {"ts": datetime.now(timezone.utc).isoformat(), **redact_dict(event)}
         with open(self._log_path, "a") as f:
             f.write(json.dumps(event, default=str) + "\n")
 
@@ -142,10 +143,15 @@ class ReplayExecutor:
     # -- session bootstrap (infrastructure, not a recorded step) ---------
 
     def _bootstrap_session(self, page, base_url: str):
-        page.goto(base_url.rstrip("/") + "/login")
-        page.locator('input[name="employee_id"]').fill(EMPLOYEE_ID)
-        page.locator('input[name="passcode"]').fill(PASSCODE)
+        employee_id, passcode = operator_credentials()
+        login_url = base_url.rstrip("/") + "/login"
+        self.allowlist.check_url(login_url)
+        self.guard.begin()
+        page.goto(login_url)
+        page.locator('input[name="employee_id"]').fill(employee_id)
+        page.locator('input[name="passcode"]').fill(passcode)
         page.get_by_role("button", name="Log In").click()
+        self.guard.raise_if_blocked()
         self.allowlist.check_url(page.url)
         self._log({"event": "session_bootstrapped"})
 
@@ -211,7 +217,9 @@ class ReplayExecutor:
         actually matched (the drift signal)."""
         resolved: Optional[ResolvedLocator] = None
         if step.action == ActionType.NAVIGATE:
-            page.goto(self._base_url.rstrip("/") + "/" + self._resolve_nav_path(step, params).lstrip("/"))
+            url = self._base_url.rstrip("/") + "/" + self._resolve_nav_path(step, params).lstrip("/")
+            self.allowlist.check_url(url)  # before leaving, not after arriving
+            page.goto(url)
             self.allowlist.check_url(page.url)
         elif step.action == ActionType.FILL:
             value = self._resolve_value(step, params)
@@ -287,6 +295,9 @@ class ReplayExecutor:
 
         status, error, resume = "resumed", None, {}
         self._escalation_in_progress = True
+        # The human may perform risky actions — that is what they are here
+        # for — but the allowlist still binds the session they are driving.
+        self.guard.begin(allow_risky=True)
         self.recorder.start()
         try:
             if on_escalation:
@@ -311,6 +322,7 @@ class ReplayExecutor:
         step_done = resume.get("step_done")
         self._log({"event": f"escalation_{status}", "step_id": step.step_id, "request_id": req_id,
                    "step_done": step_done, "human_actions": human_actions,
+                   "requests_blocked_by_policy": list(self.guard.violations),
                    "screenshot": self._screenshot(page, f"post_escalation_{step.step_id}")})
         return {"status": status, "error": error, "step_done": step_done,
                 "detail": {"reason": reason, "step_id": step.step_id, "intervention_request_id": req_id,
@@ -389,11 +401,14 @@ class ReplayExecutor:
         interrupted = None
         steps_executed = 0
 
+        self.guard = NetworkGuard(self.allowlist)
+
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=self.headless, args=[f"--remote-debugging-port={self.cdp_port}"])
             page = browser.new_page()
             page.on("dialog", self._on_dialog)
             self.recorder.install(page)
+            self.guard.install(page.context)
             escalated_failures: set[str] = set()
 
             try:
@@ -493,8 +508,17 @@ class ReplayExecutor:
                         self._pending_dialog_action = steps[i + 1].on_dialog
 
                     try:
+                        self.allowlist.check_action(step.action.value)
+                        # A step reaching this point with a risk flag has been
+                        # cleared: a human handed it back to run, or the
+                        # artifact's review stands as its confirmation
+                        # (--auto-approve). Any other step is held to safe
+                        # requests only, whatever the artifact claims.
+                        self.guard.begin(allow_risky=step.requires_confirmation
+                                         and step.risk_level in (RiskLevel.RISKY, RiskLevel.IRREVERSIBLE))
                         resolved = self._execute_step(page, step, params, outputs)
-                    except (LocatorResolutionError, StepAssertionFailed, PlaywrightError) as e:
+                        self.guard.raise_if_blocked()
+                    except (LocatorResolutionError, StepAssertionFailed, PlaywrightError, RiskyActionBlocked) as e:
                         # Opt-in: instead of failing, bring a human to the
                         # live session at the point of failure. Once per
                         # step — if it fails again after the handoff, that
@@ -598,6 +622,12 @@ class ReplayExecutor:
                 outcome = ReplayOutcome.FAILURE
                 failure = self._failure(page, current_step_id, expected=e.expected, observed=e.observed,
                                         message="A mid-flow assertion did not hold.", event="assertion_failed")
+            except RiskyActionBlocked as e:
+                outcome = ReplayOutcome.FAILURE
+                failure = self._failure(
+                    page, current_step_id, expected="a step recorded as safe to make only safe requests",
+                    observed=str(e), message="Risk policy violation — the artifact under-classifies this step.",
+                    event="risky_request_blocked")
             except AllowlistViolation as e:
                 outcome = ReplayOutcome.FAILURE
                 failure = self._failure(page, current_step_id, expected="URL within allowlist", observed=str(e),

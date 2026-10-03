@@ -267,57 +267,104 @@ at a time.
 
 ## 6. Safety
 
-- **Allowlist** (`guardrails/allowlist.py`): a domain allowlist checked
-  after every navigation and every click that might have caused one, in
-  both discovery and replay — the same code path, so there's no way for
-  one side to enforce it and the other not to.
-- **Risk handling**: safe/reversible steps execute normally; risky/
-  irreversible steps escalate by default (§5). This is coarser than a
-  full action-type policy (e.g. distinguishing "any POST" from "any GET"),
-  but it's driven by what discovery actually observed happening, not a
-  guess, and it's the one axis the brief calls out as needing conservative
-  handling.
-- **Redaction** (`guardrails/redaction.py`): applied at the log-writing
-  boundary in both discovery and replay, not just at points I remembered
-  were sensitive — password-typed fields and anything matching common
-  secret/PII shapes (SSN, card-number patterns) are redacted before a line
-  ever reaches disk. The one real credential in this system (the operator
-  login) never even flows through the logged path — bootstrap login is
-  driven directly, not through the same tool-call logging discovery's LLM
-  actions go through.
-- **Limits of this model**: redaction here is pattern-based, not a full
-  PII classifier, and risk classification is single-signal (did a dialog
-  fire). Both are honest v1s, not a claim of completeness — see §7.
+One policy object (`guardrails/allowlist.py`), built from config and used
+identically by discovery and replay, with four independent axes: permitted
+**domains**, permitted **routes** (path globs), permitted **action types**,
+and **risky routes** (where a state-changing request counts as
+irreversible). An empty or unparseable input blocks; nothing fails open.
+
+**Enforced before the fact, not after.** Three points, earliest first:
+
+1. *Before an action*: its type, and for a navigation its destination.
+2. *On the wire* (`guardrails/network.py`): a click's destination can't be
+   known in advance, and checking the URL afterwards means the request has
+   already reached the server. Every request the session makes is hooked,
+   and one that leaves the allowlist is aborted before it is sent. The test
+   for this clicks "Log Off" under a policy that doesn't permit `/logout`
+   and shows the session is still signed in afterwards.
+3. *After an action*, on the URL the page landed on, because the request
+   hook isn't called for redirect hops.
+
+**Risky and irreversible actions are handled by requiring a human**, not by
+blocking outright (the capability exists to do them) and not by flagging
+after the fact (too late for "irreversible"). Classification has two
+independent signals: the app raised a native confirmation dialog, or the
+action made a non-GET request to a risky route. Then:
+
+- *Discovery*: a click the model declares irreversible pauses for a
+  human's approval first (§5). One it didn't declare can't slip through:
+  an unplanned dialog is dismissed, and a risky request is aborted on the
+  wire. `--allow-irreversible` turns the gate off for a sandbox target.
+- *Replay*: a flagged step escalates, or runs under `--auto-approve` when
+  the artifact is approved (§2). A step *not* flagged is held to safe
+  requests regardless of what the artifact says, so an under-classified
+  artifact still can't commit a risky request.
+- While a human holds the session they may act on risk, but the allowlist
+  still binds the session they are driving.
+
+**Data handling.** Two mechanisms, for two different boundaries:
+
+- *What is written to disk* (`guardrails/redaction.py`). Every log event
+  is redacted whole, at every depth: sensitive key names, and value shapes
+  (SSN, card, this app's account-number format, dollar amounts). Values
+  the run itself extracted from a record, such as a member's name, have no
+  shape to match, so they are scrubbed by provenance instead. Failure DOM
+  snapshots go through the same redaction.
+- *What reaches the model* (`guardrails/tokenizer.py`): sensitive-shaped
+  values in params and page text are swapped for placeholders before the
+  prompt is built and swapped back only at the moment of a browser action.
+- *Artifacts*: the description and checkpoint text a model writes quote
+  the record it was looking at. They are generalized before saving (param
+  values and extracted outputs become `{placeholders}`, shapes are
+  redacted). A typed value that is neither a declared input nor plainly
+  innocuous is not stored; that step is handed to a human at replay.
+- *Credentials*: the operator login comes from one seam
+  (`guardrails/credentials.py`), is driven outside the tool surface, and
+  never enters an artifact, a log, or the model's context.
+- *Deliberately not redacted*: a capability's own declared outputs in the
+  result it returns (that is the deliverable), and ordinary identifiers
+  such as a member ID, which the app and the brief both use openly.
+
+**Limits.** Redaction is pattern- and provenance-based, not a PII
+classifier: a novel format in free text can get through. Screenshots are
+not pixel-redacted; the ones in `/evidence/` show only this mock app's
+fabricated data, but a real account screen would need field-level masking
+first. The policy is coarse (domain, route, action type, verb) and knows
+nothing of business meaning: it can't say "transfers under $100 are fine".
+Risky routes are configured, not learned. Route checks apply to documents
+and XHR, not to static assets.
 
 ## 7. Cuts
 
 Deliberately not built, and why:
 
-- **Multi-tenant dispatch / per-tenant override resolution** — designed
-  (§4), not implemented. Building it against one tenant would have meant
-  fabricating a second fake tenant to prove it, which felt like effort
-  better spent on the replay engine's error taxonomy, which the brief
-  weights higher.
-- **A real operator co-browsing UI** — explicitly out of scope per the
-  brief; a bare mock console stands in, with the real handoff mechanism
-  underneath it.
-- **Desktop/OS-automation surface** — designed as a `LocatorMethod`
-  extension (§4), not built; no desktop app was in scope for one concrete
-  surface.
-- **A full action-type/route-based risk policy** — current classification
-  is dialog-driven only. Next: classify by HTTP verb / route pattern too,
-  so a POST to a mutating endpoint is flagged even if the discovery run
-  never happened to trigger a confirmation dialog for it.
-- **Escalation "decline" path** — resume currently always means "the human
-  proceeded." A real decline (abort the run, or retry with different
-  params) is the next thing I'd add to the control channel's state
-  machine.
-- **Confidence/approval scoring and canonicalized route patterns**
-  (stretch goals) — skipped in favor of depth on the required core:
-  schema, replay error handling, and a genuinely-reattaching escalation
-  mechanism, per the brief's explicit preference for depth over breadth.
+- **Multi-tenant dispatch and per-tenant overrides**: designed (§4), not
+  implemented. Proving it would have meant fabricating a second tenant;
+  the effort went into the replay contract and the handoff instead.
+- **A real operator console**: explicitly out of scope per the brief. A
+  bare Flask page stands in, over the real control-transfer mechanism. The
+  operator drives the page through `chrome://inspect` or the headed
+  window, not an embedded live view.
+- **Desktop and framed legacy-web surfaces**: one browser surface only.
+  The seam is described in §4; perception is DOM-derived plus a
+  screenshot, not yet an accessibility-tree or coordinate path.
+- **Known outcomes are authored, not discovered**: a successful run never
+  sees "no such member", so `known_outcomes` and `recoverable_patterns`
+  come from a second authoring pass (`agent/augment_artifact.py`) written
+  per capability. A declarative per-vendor-app profile is the next step.
+- **Drift aggregation**: the per-run signal exists
+  (`locator_fallbacks`); trending it per tenant and triggering re-review
+  does not.
+- **Scale infrastructure**: single process, flat files, a file-backed
+  control channel, one CDP port per run. Each sits behind an interface
+  (`ControlTransport`, the repository module, the provider router) rather
+  than being built out.
+- **Pixel redaction of screenshots** and a real PII classifier (§6).
+- **Stretch goals**: the approval gate and reviewer workflow are built
+  (§2). Code generation, multi-run stability scoring, and LLM-assisted
+  single-step recovery are not.
 
-With more time, in order: the escalation decline path (cheapest, closes a
-real gap), then per-tenant override resolution (highest leverage against
-the brief's stated production reality of hundreds of tenants), then a
-route-based risk policy.
+With more time, in order: per-tenant override resolution (highest leverage
+against hundreds of tenants on the same vendor app), a declarative
+known-outcome profile per vendor app, then an accessibility-tree
+perception path to make the "no clean DOM" story concrete.

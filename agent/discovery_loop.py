@@ -63,11 +63,17 @@ from escalation.transport import (
     RunInterrupted,
 )
 from guardrails.allowlist import Allowlist, AllowlistViolation
-from guardrails.redaction import redact_dict
+from guardrails.credentials import operator_credentials
+from guardrails.network import RiskyActionBlocked
+from guardrails.redaction import (
+    generalize_for_artifact,
+    redact_dict,
+    redact_field_value,
+    redact_text,
+    scrub_known_value,
+)
 from guardrails.tokenizer import TOKEN_EXPLAINER, Tokenizer
 
-EMPLOYEE_ID = "EMP001"
-PASSCODE = "demo1234"
 
 MAX_STEPS = 25
 WALL_TIMEOUT_S = 180  # the model's working time; time spent waiting on a human doesn't count
@@ -196,7 +202,8 @@ class DiscoveryRun:
                  params: dict[str, str], outputs: list[dict], evidence_root: Path,
                  param_types: Optional[dict[str, str]] = None, headless: bool = True,
                  vision: bool = True, llm=None, artifact_version: str = "1.0.0",
-                 escalation_timeout_s: Optional[float] = 600, on_escalation=None, cdp_port: int = 9334):
+                 escalation_timeout_s: Optional[float] = 600, on_escalation=None, cdp_port: int = 9334,
+                 risk_gate: bool = True):
         self.capability_name = capability_name
         self.goal = goal
         self.base_url = base_url
@@ -232,6 +239,11 @@ class DiscoveryRun:
 
         self.recorded_steps: list[Step] = []
         self._turn = 0
+        # raw extracted value -> label, for scrubbing logs (see _log)
+        self._record_values: dict[str, str] = {}
+        # Irreversible actions need a human's approval during discovery too.
+        self.risk_gate = risk_gate
+        self._last_handoff: dict = {}
 
         # Human handoff (see _escalate). Same control channel and file layout
         # replay uses, so the operator console works on a discovery run too.
@@ -254,22 +266,31 @@ class DiscoveryRun:
             return None
 
     def _log(self, event: dict):
-        if "tool_input" in event and isinstance(event["tool_input"], dict):
-            event = {**event, "tool_input": redact_dict(event["tool_input"])}
+        # Two passes over the whole event. Value shapes (account numbers,
+        # amounts, secrets) at every depth; then literal values this run
+        # read off a record — a member's name has no shape to match, but we
+        # know it's record data because we extracted it.
+        event = scrub_known_value(redact_dict(event), self._record_values)
         event = {"ts": datetime.now(timezone.utc).isoformat(), **event}
         with open(self._log_path, "a") as f:
             f.write(json.dumps(event, default=str) + "\n")
 
     def _bootstrap_session(self, browser: BrowserSurface):
-        """Login is infrastructure, not a capability step — see module docstring."""
-        browser.navigate("/login")
-        obs = browser.observe("bootstrap_login")
-        emp_idx = next(e.index for e in obs.elements if e.name == "employee_id")
-        pass_idx = next(e.index for e in obs.elements if e.name == "passcode")
-        login_idx = next(e.index for e in obs.elements if "Log In" in e.text)
-        browser.fill(emp_idx, EMPLOYEE_ID, obs.elements)
-        browser.fill(pass_idx, PASSCODE, obs.elements)
-        browser.click(login_idx, obs.elements)
+        """Login is infrastructure, not a capability step — see module
+        docstring. Driven directly on the page, outside the tool surface:
+        it isn't recorded, isn't logged, never reaches the model, and isn't
+        subject to the action-type allowlist (a read-only policy must still
+        be able to sign in). The domain/route policy does apply."""
+        employee_id, passcode = operator_credentials()
+        login_url = self.base_url.rstrip("/") + "/login"
+        self.allowlist.check_url(login_url)
+        browser.guard.begin()
+        browser.page.goto(login_url)
+        browser.page.locator('input[name="employee_id"]').fill(employee_id)
+        browser.page.locator('input[name="passcode"]').fill(passcode)
+        browser.page.get_by_role("button", name="Log In").click()
+        browser.guard.raise_if_blocked()
+        self.allowlist.check_url(browser.page.url)
         self._log({"event": "session_bootstrapped"})
 
     def _record_step_for_action(self, kind: str, rec: ActionRecord) -> None:
@@ -284,23 +305,36 @@ class DiscoveryRun:
 
         if kind == "fill":
             value_param = next((name for name, val in self.params.items() if val == rec.value), None)
+            # A typed value that isn't one of the declared inputs is kept as
+            # a literal only if nothing about it looks sensitive (a constant
+            # like a dropdown choice). Otherwise it is not stored at all,
+            # and the step is handed to a human at replay.
+            el = rec.target_element
+            literal_is_safe = redact_field_value(el.name, el.type, rec.value or "") == (rec.value or "")
+            keep_literal = value_param is None and literal_is_safe
+            unstorable = value_param is None and not literal_is_safe
             self.recorded_steps.append(Step(
                 step_id=step_id, intent=rec.intent, action=ActionType.FILL,
-                target=LocatorSpec(strategies=derive_locator_strategies(rec.target_element)),
+                target=LocatorSpec(strategies=derive_locator_strategies(el)),
                 value_param=value_param,
-                value_literal=None if value_param else rec.value,
+                value_literal=rec.value if keep_literal else None,
+                risk_level=RiskLevel.RISKY if unstorable else RiskLevel.SAFE,
+                requires_confirmation=unstorable,
             ))
             return
 
         if kind == "click":
-            irreversible = rec.dialog_message is not None
+            # Two independent signals, either is enough: the app asked "are
+            # you sure?" with a native dialog, or the click made a
+            # state-changing request to a route policy marks risky.
+            irreversible = rec.dialog_message is not None or rec.risky_request
             self.recorded_steps.append(Step(
                 step_id=step_id, intent=rec.intent, action=ActionType.CLICK,
                 target=LocatorSpec(strategies=derive_locator_strategies(rec.target_element)),
                 risk_level=RiskLevel.IRREVERSIBLE if irreversible else RiskLevel.SAFE,
                 requires_confirmation=irreversible,
             ))
-            if irreversible:
+            if rec.dialog_message is not None:
                 dialog_step_id = f"s{len(self.recorded_steps) + 1}"
                 self.recorded_steps.append(Step(
                     step_id=dialog_step_id,
@@ -463,6 +497,8 @@ class DiscoveryRun:
                         self._record_step_for_action(action_kind, rec)
                     if action_kind == "extract_field":
                         extracted_outputs[rec.output_name] = rec.extracted_value
+                        if rec.extracted_value:
+                            self._record_values[rec.extracted_value] = f"[REDACTED-{rec.output_name}]"
                     if self.vision and obs_for_shot is not None:
                         latest_screenshot = self._read_screenshot_bytes(obs_for_shot.screenshot_path)
                     error_streak = 0
@@ -470,6 +506,9 @@ class DiscoveryRun:
                     raise
                 except Exception as e:  # noqa: BLE001 - deliberately broad: feed the error back to the model
                     result_text = f"Error executing {tool_use.name}: {e}"
+                    if isinstance(e, RiskyActionBlocked):
+                        result_text += (" If you do intend this irreversible action, call click again with "
+                                        "on_dialog='accept': a human will be asked to approve it first.")
                     self._log({"event": "tool_error", "turn": self._turn, "error": str(e)})
                     error_streak += 1
                     if error_streak >= STUCK_ERROR_THRESHOLD:
@@ -518,6 +557,7 @@ class DiscoveryRun:
                    "reason": reason, "screenshot": shot, "recorded_steps_so_far": len(self.recorded_steps)})
 
         waited_from = time.time()
+        browser.guard.begin(allow_risky=True)  # the human may act on risk; the allowlist still binds them
         browser.recorder.start()
         try:
             if self.on_escalation:
@@ -540,6 +580,7 @@ class DiscoveryRun:
                 detail={k: v for k, v in entry.items() if k not in ("at", "source", "description")})
         human_actions = observed_evidence + resume.get("human_actions", [])
         new_steps = self._record_human_steps(observed)
+        self._last_handoff = {"observed": observed, "step_done": resume.get("step_done")}
 
         obs = browser.observe(f"turn{self._turn}_post_escalation")
         self.interventions.append({"request_id": req_id, "kind": kind, "reason": reason,
@@ -625,7 +666,25 @@ class DiscoveryRun:
 
         if name == "click":
             obs = browser.observe(f"turn{self._turn}_pre_click")
-            rec = browser.click(tool_input["index"], obs.elements, on_dialog=tool_input.get("on_dialog"))
+            # on_dialog='accept' is the model declaring "I expect this to be
+            # irreversible and I mean to go through with it".
+            declared_irreversible = tool_input.get("on_dialog") == "accept"
+            if declared_irreversible and self.risk_gate:
+                el = next((e for e in obs.elements if e.index == tool_input["index"]), None)
+                target = el.describe() if el else f"element {tool_input['index']}"
+                handoff_note, obs_after = self._escalate(
+                    browser, f"The agent is about to perform an action it expects to be irreversible: "
+                    f"click {target}. Hand back for automation to do it, do it yourself, or cancel.",
+                    InterventionKind.RISK_CONFIRMATION)
+                handoff = self._last_handoff
+                human_did_it = (handoff["step_done"] if handoff["step_done"] is not None
+                                else any(a.kind == "click" for a in handoff["observed"]))
+                if human_did_it:
+                    return handoff_note, None, None, obs_after
+                self._log({"event": "risky_action_approved", "turn": self._turn, "target": target})
+                obs = browser.observe(f"turn{self._turn}_pre_click_approved")
+            rec = browser.click(tool_input["index"], obs.elements, on_dialog=tool_input.get("on_dialog"),
+                                allow_risky=declared_irreversible)
             note = "Clicked."
             if rec.dialog_message:
                 note += f" A confirmation dialog appeared ({rec.dialog_message!r}) and was {rec.dialog_action}ed."
@@ -668,7 +727,7 @@ class DiscoveryRun:
         input_schema = [
             InputParam(
                 name=name, type=_infer_param_type(name, value, self.param_types), required=True,
-                description=f"Value for {name}.", example=str(value),
+                description=f"Value for {name}.", example=redact_text(str(value)),
             )
             for name, value in self.params.items()
         ]
@@ -685,13 +744,19 @@ class DiscoveryRun:
             if value and value in checkpoint_value:
                 checkpoint_value = checkpoint_value.replace(value, "{" + name + "}")
 
+        # The model wrote the summary and checkpoint description while looking
+        # at one member's record, and quotes it. An artifact describes the
+        # capability, not that record.
+        def clean(text: str) -> str:
+            return generalize_for_artifact(text, self.params, extracted_outputs)
+
         artifact = CapabilityArtifact(
             artifact_id=str(uuid.uuid4()),
             name=self.capability_name,
             version=self.artifact_version,
-            description=f"{self.goal} — {summary or ''}".strip(" —"),
+            description=clean(f"{self.goal} — {summary or ''}".strip(" —")),
             provenance=DiscoveryProvenance(
-                goal=self.goal,
+                goal=clean(self.goal),
                 discovery_run_id=self.run_id,
                 model_provider=getattr(self.llm, "provider", "unknown"),
                 model_name=self.llm.model,
@@ -709,7 +774,7 @@ class DiscoveryRun:
             output_schema=output_schema,
             steps=self.recorded_steps,
             checkpoint=Checkpoint(
-                description=checkpoint_desc or "Final page reached without error.",
+                description=clean(checkpoint_desc or "Final page reached without error."),
                 method=CheckpointMethod.URL_MATCHES,
                 value=checkpoint_value,
             ),

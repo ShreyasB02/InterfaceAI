@@ -119,6 +119,28 @@ the three-way outcome taxonomy, CDP-based session handoff) — only the
 model's decisions are scripted. Their output goes to `/tmp`, never to
 `/evidence/`, so it can't be mistaken for the graded run.
 
+## Guardrails
+
+Policy is configuration (`.env`, see `.env.example`), enforced the same way
+in discovery and replay:
+
+| Setting | Effect |
+|---|---|
+| `ALLOWLIST_DOMAINS` | hosts the session may talk to; empty blocks everything |
+| `ALLOWLIST_ROUTES` | path globs allowed on those hosts, e.g. `/,/login,/members/*` |
+| `ALLOWLIST_ACTIONS` | action types allowed at all (omit `fill` for a read-only agent) |
+| `RISKY_ROUTES` | path globs where a non-GET request is irreversible, e.g. `*/confirm` |
+
+A request that leaves the allowlist is aborted before it is sent, not
+noticed afterwards. An irreversible action needs a human: discovery pauses
+for approval when the model declares one (`--allow-irreversible` disables
+this for a sandbox), and replay escalates the step unless the artifact is
+approved and run with `--auto-approve`.
+
+```bash
+python3 tests/test_guardrails.py    # policy, on-the-wire enforcement, redaction
+```
+
 ## Human handoff
 
 A run hands its live browser session to a person when the model asks for
@@ -165,7 +187,8 @@ artifacts/review.py       the draft -> approved | rejected gate
 agent/                discovery: browser surface, locator inference,
                       LLM tool-use loop, artifact assembly, augmentation pass
 replay/               deterministic replay: locator resolution, the executor
-guardrails/           allowlist, redaction, risk/escalation policy
+guardrails/           allowlist policy + on-the-wire enforcement, redaction,
+                      tokenizer, risk policy, credential seam
 escalation/           control transport, human-action recorder, mock operator
                       console, the CDP-reattachment "simulated operator"
 evidence/             where real run output lands (empty until you run it)

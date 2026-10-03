@@ -69,6 +69,10 @@ def main():
                          help="Seconds to wait for a human when the run escalates (the model calls "
                               "request_human, or the harness sees it stuck) before giving up. Resolve it "
                               "from the operator console: python -m escalation.operator_console.")
+    parser.add_argument("--allow-irreversible", action="store_true",
+                         help="Let the model perform actions it declares irreversible without a human "
+                              "approving each one first. Only for a sandbox target where nothing real "
+                              "can be committed. Without it, such a click escalates for approval.")
     parser.add_argument("--simulate-operator", action="append", default=None, metavar="ACTION",
                          help="If the run escalates, reattach via CDP and perform this action on the same "
                               "live session: 'click:<label>' or 'fill:<field name>=<value>'. Repeatable. "
@@ -112,6 +116,7 @@ def main():
         llm=llm,
         escalation_timeout_s=args.escalation_timeout,
         on_escalation=on_escalation,
+        risk_gate=not args.allow_irreversible,
         # Re-discovering an existing capability records the next major
         # version; earlier versions stay in the store.
         artifact_version=repository.next_major_version(args.capability_name),

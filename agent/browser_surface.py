@@ -33,6 +33,7 @@ from playwright.sync_api import Dialog, Page, sync_playwright
 
 from escalation.recorder import HumanActionRecorder
 from guardrails.allowlist import Allowlist
+from guardrails.network import NetworkGuard
 from guardrails.safety import safe_screenshot
 from agent.locator_inference import ElementMeta, derive_locator_strategies
 
@@ -95,6 +96,8 @@ class ActionRecord:
     dialog_message: Optional[str] = None
     dialog_action: Optional[str] = None
     nav_path: Optional[str] = None
+    # The action made a state-changing request to a route policy marks risky.
+    risky_request: bool = False
 
 
 class BrowserSurface:
@@ -115,6 +118,7 @@ class BrowserSurface:
         self.cdp_endpoint = f"http://127.0.0.1:{cdp_port}"
         self._cdp_port = cdp_port
         self.recorder = HumanActionRecorder()
+        self.guard = NetworkGuard(allowlist)
 
     def __enter__(self) -> "BrowserSurface":
         self._pw = sync_playwright().start()
@@ -123,6 +127,7 @@ class BrowserSurface:
         self.page = self._browser.new_page()
         self.page.on("dialog", self._on_dialog)
         self.recorder.install(self.page)
+        self.guard.install(self.page.context)
         (self.evidence_dir / "screenshots").mkdir(parents=True, exist_ok=True)
         return self
 
@@ -185,29 +190,41 @@ class BrowserSurface:
 
     def navigate(self, path: str) -> ActionRecord:
         url = self._resolve_url(path)
+        self.allowlist.check_action("navigate")
         self.allowlist.check_url(url)
+        self.guard.begin()
         self.page.goto(url)
+        self.guard.raise_if_blocked()
         self.allowlist.check_url(self.page.url)
         return ActionRecord(kind="navigate", intent=f"Navigate to {path}", nav_path=path)
 
-    def click(self, index: int, elements: list[ElementMeta], on_dialog: Optional[str] = None) -> ActionRecord:
+    def click(self, index: int, elements: list[ElementMeta], on_dialog: Optional[str] = None,
+              allow_risky: bool = False) -> ActionRecord:
+        """`allow_risky` clears this one click to make a state-changing
+        request to a risky route. Without it such a request is aborted on
+        the wire (guardrails/network.py) and RiskyActionBlocked is raised."""
+        self.allowlist.check_action("click")
         el = next(e for e in elements if e.index == index)
         self._pending_dialog = None
         self._pending_dialog_action = on_dialog
         locator = self.page.locator(f'[data-cua-idx="{index}"]')
+        self.guard.begin(allow_risky=allow_risky)
         locator.click()
+        self.guard.raise_if_blocked()
         self.allowlist.check_url(self.page.url)
         rec = ActionRecord(
             kind="click",
             intent=f"Click {el.describe()}",
             target_element=el,
         )
+        rec.risky_request = bool(self.guard.risky_allowed)
         if self._pending_dialog is not None:
             rec.dialog_message = self._pending_dialog.message
             rec.dialog_action = self._pending_dialog_action
         return rec
 
     def fill(self, index: int, value: str, elements: list[ElementMeta]) -> ActionRecord:
+        self.allowlist.check_action("fill")
         el = next(e for e in elements if e.index == index)
         locator = self.page.locator(f'[data-cua-idx="{index}"]')
         locator.fill(value)
@@ -219,10 +236,12 @@ class BrowserSurface:
         )
 
     def wait_for_text(self, text: str, timeout_ms: int = 8000) -> ActionRecord:
+        self.allowlist.check_action("wait_for")
         self.page.get_by_text(text, exact=False).first.wait_for(timeout=timeout_ms)
         return ActionRecord(kind="wait_for_text", intent=f"Wait for text '{text}' to appear", value=text)
 
     def extract_field(self, label: str, output_name: str, cell_index: int = -1) -> ActionRecord:
+        self.allowlist.check_action("extract")
         row = self.page.locator(f"xpath=//tr[td[normalize-space()='{label}']]").first
         cells = row.locator("td")
         count = cells.count()
