@@ -1,0 +1,109 @@
+[
+  {
+    "name": "lookup_member_balance",
+    "description": "Look up member {member_id} and read their current savings balance. \u2014 Successfully looked up member {member_id} and retrieved their current savings balance.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "member_id": {
+          "type": "string",
+          "description": "Value for member_id.",
+          "examples": [
+            "10001"
+          ]
+        }
+      },
+      "required": [
+        "member_id"
+      ],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "member_name": {
+          "type": "string",
+          "description": "Member's full name"
+        },
+        "savings_balance": {
+          "type": "number",
+          "description": "Current savings balance in USD"
+        }
+      },
+      "required": [
+        "member_name",
+        "savings_balance"
+      ]
+    },
+    "outcomes": [
+      {
+        "code": "member_not_found",
+        "message": "No member exists with the given ID."
+      }
+    ],
+    "requires_human_confirmation": false,
+    "version": "1.1.0",
+    "approved_by": "ShreyasB02"
+  },
+  {
+    "name": "open_sub_account",
+    "description": "Open a new sub-account for member {member_id} with nickname '{nickname}' and an initial deposit of {initial_deposit}, and reach the confirmation screen. \u2014 Opened a new sub-account with nickname '{nickname}' and initial deposit of {initial_deposit}.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "member_id": {
+          "type": "string",
+          "description": "Value for member_id.",
+          "examples": [
+            "10001"
+          ]
+        },
+        "nickname": {
+          "type": "string",
+          "description": "Value for nickname.",
+          "examples": [
+            "Vacation Fund"
+          ]
+        },
+        "initial_deposit": {
+          "type": "number",
+          "description": "Value for initial_deposit.",
+          "examples": [
+            "150"
+          ]
+        }
+      },
+      "required": [
+        "member_id",
+        "nickname",
+        "initial_deposit"
+      ],
+      "additionalProperties": false
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "new_account_number": {
+          "type": "string",
+          "description": "The new sub-account's number"
+        }
+      },
+      "required": [
+        "new_account_number"
+      ]
+    },
+    "outcomes": [
+      {
+        "code": "permission_denied",
+        "message": "Sub-account creation is blocked for this member (compliance hold)."
+      },
+      {
+        "code": "invalid_deposit_amount",
+        "message": "The initial deposit did not meet the app's minimum."
+      }
+    ],
+    "requires_human_confirmation": true,
+    "version": "4.1.0",
+    "approved_by": "ShreyasB02"
+  }
+]

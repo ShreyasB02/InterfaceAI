@@ -16,14 +16,15 @@ An interface.ai take-home; the brief's seven REPORT headings and the
 
 ```bash
 pip install -r requirements.txt && python -m playwright install chromium
-pytest                         # 50 tests, no API key; starts target_app itself if needed
+pytest                         # 62 tests, no API key; starts target_app itself if needed
 python target_app/app.py       # needed for the CLIs below (port 5055)
 
 python -m agent.run_discovery --capability-name <name> --goal "..." \
   --entry-path /members/search --param member_id=10001 --output name:string:"..."
-python -m agent.augment_artifact --capability-name <name>
+python -m artifacts.profile apply <name>          # vendor outcome profile -> next minor, draft
 python -m artifacts.review list | show <name> | approve <name> --reviewer <who>
 python -m replay.run_replay --capability-name <name> --param member_id=10001
+python -m capabilities list | invoke <name> --args '{...}'   # the agent-facing catalog
 python -m escalation.operator_console      # port 5056
 ```
 
@@ -38,7 +39,9 @@ Discovery needs one provider key in `.env` (`.env.example` lists them).
 | `agent/llm/` | Provider-agnostic model access: `base.py` (neutral contract), `gemini.py`, `openai_compat.py`, `router.py` (retry, failover) |
 | `artifacts/schema/` | `CapabilityArtifact` and `ReplayResult` contracts. Read the module docstrings before changing either |
 | `artifacts/repository.py`, `review.py` | Immutable per-version store; the draft -> approved gate and content hash |
-| `replay/` | `locator_resolver.py`, `executor.py` (the engine; handoff logic is `_handoff`) |
+| `artifacts/profile.py`, `profiles/` | Known outcomes and recoveries declared per vendor app, anchored to controls |
+| `capabilities/` | Agent-facing catalog: `list_tools()`, `invoke()`; approved artifacts only |
+| `replay/` | `surface.py` (the Surface contract), `playwright_surface.py` + `locator_resolver.py` (the web implementation), `executor.py` (the engine; handoff logic is `_handoff`) |
 | `guardrails/` | `allowlist.py` (policy), `network.py` (on-the-wire enforcement), `risk_policy.py`, `redaction.py`, `tokenizer.py`, `credentials.py` |
 | `escalation/` | `transport.py` (interface), `control_channel.py` (file-based), `recorder.py` (observes the human), `inpage.py` (hand-back bar in headed runs), `notify.py`, `operator_console.py`, `simulated_operator.py` |
 
@@ -46,6 +49,12 @@ Discovery needs one provider key in `.env` (`.env.example` lists them).
 
 - **Replay never imports `agent/`.** No model client may become reachable
   from `replay/`.
+- **`replay/executor.py` never imports Playwright.** Everything it does to
+  the app goes through `replay/surface.py`; a driver-specific call belongs
+  in `playwright_surface.py`. `tests/test_surface_seam.py` enforces both
+  of these in a subprocess.
+- **Error handling is not written per capability.** Add a rule to the
+  vendor's file in `artifacts/profiles/`, anchored to a control.
 - **Login is bootstrapped outside recorded steps** (`_bootstrap_session` in
   both `discovery_loop.py` and `replay/executor.py`), using
   `guardrails/credentials.py`. Don't record login as steps.

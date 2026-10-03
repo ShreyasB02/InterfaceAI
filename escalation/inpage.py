@@ -105,6 +105,10 @@ class InPageHandBack:
         page.context.expose_binding(BINDING_NAME, self._on_decision)
         page.context.expose_binding(STATE_BINDING_NAME, lambda source: self._state)
         page.context.add_init_script(BAR_JS)
+        # Belt and braces: the init script asks for the state when a new
+        # document starts, and this pushes it once the document is ready.
+        # An operator must never land on a page with no way to hand back.
+        page.on("domcontentloaded", lambda _page: self._redraw() if self._state else None)
 
     def show(self, control: ControlTransport, reason: str) -> None:
         self._control = control

@@ -39,6 +39,10 @@ Decisions and their trade-offs:
   failover over one neutral message history. Discovery is the only part
   with an external dependency, and a single overloaded provider shouldn't
   be able to stall it.
+- **The agent-facing boundary is a catalog** (`capabilities/`): approved
+  artifacts listed as tools with JSON-Schema arguments, and one `invoke`
+  that runs deterministic replay and returns the result enum. An agent
+  never sees steps, locators, or a browser, and can't discover a draft.
 - **Login is infrastructure, not a recorded step.** Both paths sign in
   before anything is observed. An artifact assumes an authenticated
   session, the way an API client attaches auth before a call, which keeps
@@ -136,31 +140,37 @@ resolved, and `locator_fallbacks` reports steps that fell past their
 primary. A tenant that starts reporting fallbacks is degrading before it
 breaks.
 
-**Limit.** A successful run never sees "no such member", so known outcomes
-and recoverable patterns come from a separate authoring pass
-(`agent/augment_artifact.py`), not from discovery.
+**Where the error handling comes from.** A successful run never sees "no
+such member", so these rules can't come from the recording. They are
+properties of the vendor app, not of one flow, so they are declared once
+per vendor product (`artifacts/profiles/*.json`) with each rule anchored to
+a control ("after a click on Search"). Applying the profile attaches every
+rule whose anchor the flow uses, as a new draft version. A new capability
+on the same app gets its error handling without new code.
 
 ## 4. Heterogeneity & multi-tenant
 
 Design only, as the brief asks.
 
-**Surface abstraction.** The seam is the artifact vocabulary. A `Step` says
-"click the control identified by this ranked spec" and names no browser
-API. Moving to another surface means a new perceive/act implementation
-(today `agent/browser_surface.py` and `replay/locator_resolver.py`) and new
-locator methods, not a new schema or a new executor loop:
+**Surface abstraction.** The seam is `replay/surface.py`. The replay engine
+speaks only that interface (resolve a `LocatorSpec`, click, fill, read,
+answer a confirmation, snapshot, cede control to a human) and imports no
+browser driver; `PlaywrightSurface` is the one implementation. A `Step` says
+"click the control this ranked spec identifies" and names no browser API, so
+a second surface is a new implementation of that class, not a new schema or
+executor. A test proves it: the real engine replays the real artifact on an
+in-memory, non-browser surface, with the same outcomes.
 
-- *Legacy web with framesets*: frame-aware resolution in the resolver, and
-  a `frame` field on the locator strategy.
-- *Desktop*: the same contract over the OS accessibility tree (UIA / AX),
-  with `role`+name carrying over unchanged, plus a last-resort
-  `screenshot_region` method (bounding box and OCR anchor).
+- *Legacy web with framesets*: the same driver with frame-aware
+  `resolve()`, and a `frame` field on the locator strategy.
+- *Desktop*: `resolve()` over the OS accessibility tree (UIA / AX), where
+  role + name locators carry over unchanged, a last-resort
+  `screenshot_region` method, and a VNC/RDP address as the endpoint an
+  operator attaches to.
 
-Honest gap: the executor still calls Playwright directly for navigation,
-dialogs and reload. Those dozen calls need to move behind a `Surface`
-interface before a second surface is real. And discovery's perception leans
-on the DOM; a surface with no usable markup needs the accessibility tree or
-coordinates as the primary path.
+Remaining gap: discovery's perception (`agent/browser_surface.py`) is still
+DOM-derived plus a screenshot. A surface with no usable markup needs the
+accessibility tree or coordinates as the primary path there.
 
 **Multi-tenant reuse.** An artifact is recorded once against a vendor
 product (`target.vendor_product`), looked up by `(vendor_product, name)`,
@@ -270,18 +280,19 @@ data). The policy knows routes and verbs, not business meaning.
 - **Multi-tenant dispatch and overrides**: designed (§4), not built.
   Proving it needed a fabricated second tenant; the time went to the replay
   contract and the handoff.
-- **A second surface**, and the `Surface` interface extraction it needs.
+- **A second surface.** The replay seam is extracted and tested (§4); no
+  second implementation exists, and discovery's perception is web-shaped.
 - **A real operator console**: out of scope per the brief; a bare page over
   the real mechanism.
-- **Discovered error handling**: known outcomes come from an authoring
-  pass written per capability. Next step: a declarative profile per vendor
-  app, applied to every artifact recorded on it.
+- **Tenant-level outcome profiles.** Profiles are per vendor product; a
+  tenant that words a banner differently needs a layer over that.
 - **Step-level postconditions** and a richer discovered checkpoint (§2).
 - **Drift aggregation**: the per-run signal exists, the trend doesn't.
 - **Scale infrastructure**: queueing, a database, a networked control
   transport.
-- **Stretch goals**: the approval gate is built. Code generation,
-  stability scoring and LLM-assisted single-step recovery are not.
+- **Stretch goals**: the approval gate and the agent-facing catalog are
+  built. Code generation, stability scoring and LLM-assisted single-step
+  recovery are not.
 
-Next, in order: tenant overrides, the per-vendor outcome profile, then an
+Next, in order: tenant overrides (artifact and profile), then an
 accessibility-tree perception path to make "no clean DOM" concrete.

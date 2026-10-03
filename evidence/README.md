@@ -44,6 +44,19 @@ The artifacts these runs produced and replayed are in
    `request_human`, an operator acts on the same live session, and the
    model carries on. What the operator did is recorded as artifact steps.
 
+## An agent calling a capability by name
+
+[`capability_catalog.json`](./capability_catalog.json) is what
+`python -m capabilities list` returns for this store: the two approved
+capabilities as tool definitions, with JSON-Schema inputs and outputs. The
+drafts and the rejected version are not in it.
+
+| Folder | Call | Outcome |
+|---|---|---|
+| `replay/replay_lookup_member_balance_20261003T130254_27f008/` | `invoke lookup_member_balance {"member_id": "10002"}` | `success`, typed outputs |
+| `replay/replay_open_sub_account_20261003T130257_08ed2a/` | `invoke open_sub_account {..., "initial_deposit": 75}` with `--confirmed-by-review` | `success`; the artifact's approval stood as confirmation for the irreversible step |
+| `replay/replay_open_sub_account_20261003T130259_2b98e3/` | the same call with `"initial_deposit": "lots"` | `input_error`, before a browser opened |
+
 ## Runs resolved by a person
 
 | Folder | What happened |

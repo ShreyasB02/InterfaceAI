@@ -68,9 +68,10 @@ python -m agent.run_discovery \
   --output member_name:string:"Member's full name" \
   --output savings_balance:number:"Current savings balance in USD"
 
-# 2. Authoring pass: declare the known outcomes and recoverable conditions
-#    a successful run never sees (saved as the next minor version)
-python -m agent.augment_artifact --capability-name lookup_member_balance
+# 2. Apply the vendor app's outcome profile: the known outcomes and
+#    recoverable conditions a successful run never sees, declared once per
+#    app in artifacts/profiles/ (saved as the next minor version)
+python -m artifacts.profile apply lookup_member_balance
 
 # 3. Review: discovery only produces a DRAFT, and a draft is refused for
 #    unattended replay. Read what it will do, then approve it.
@@ -101,6 +102,27 @@ runs these CLIs in order and checks each outcome:
 ```bash
 python scripts/make_evidence.py --reviewer "$USER"
 ```
+
+## Calling a capability as an agent would
+
+Approved artifacts are exposed as a catalog of tools with typed arguments
+(`capabilities/`). An agent sees names, JSON-Schema inputs and outputs, and
+the named outcomes; it never sees steps or a browser, and drafts are not
+listed.
+
+```bash
+python -m capabilities list
+python -m capabilities invoke lookup_member_balance --args '{"member_id": "10002"}'
+python -m capabilities invoke open_sub_account --confirmed-by-review \
+  --args '{"member_id": "10002", "nickname": "Rainy Day", "initial_deposit": 100}'
+```
+
+`invoke` runs deterministic replay pinned to the approved version and
+prints the result. Missing, unexpected or mistyped arguments come back as
+`input_error` before a browser opens. A capability with an irreversible step
+returns `escalated` after a timeout rather than blocking the caller, unless
+`--confirmed-by-review` lets the artifact's approval stand as confirmation.
+From Python: `capabilities.list_tools()` and `capabilities.invoke(name, args)`.
 
 ## Human handoff
 
@@ -176,7 +198,7 @@ redacted; credentials never reach an artifact, a log, or the model.
 pytest
 ```
 
-50 tests, about a minute, no API key and nothing to start first: the model's
+62 tests, about a minute, no API key and nothing to start first: the model's
 decisions are scripted, the target app is started by the test session if it
 isn't running, and output goes to `/tmp`, never to `evidence/`. Everything
 else is the real code path, including the CDP handoff.
@@ -189,8 +211,10 @@ agent/          discovery: browser surface, locator inference, the
                 observe -> decide -> act loop, tool surface
 agent/llm/      provider-agnostic model access: adapters, retry, failover
 artifacts/      the artifact and result contracts (schema/), the versioned
-                store, and the review gate
-replay/         deterministic replay: locator resolution and the executor
+                store, the review gate, and per-vendor outcome profiles
+capabilities/   the agent-facing catalog: list tools, invoke by name
+replay/         deterministic replay: the Surface interface, its Playwright
+                implementation, and the executor (which imports no driver)
 guardrails/     allowlist policy, on-the-wire enforcement, risk policy,
                 redaction, tokenizer, credential seam
 escalation/     control transport, human-action recorder, operator console,
