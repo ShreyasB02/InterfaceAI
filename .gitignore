@@ -15,10 +15,7 @@ evidence/replay/run_*/
 !evidence/discovery/example_run/
 !evidence/replay/example_run/
 
-# Artifact store — keep the seeded example artifact, ignore scratch ones.
-artifacts/store/*.json
-!artifacts/store/lookup_member_balance.v1.json
-!artifacts/store/open_sub_account.v1.json
+# Artifact store: every version is tracked — the store is the review history.
 
 *.db
 .DS_Store

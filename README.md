@@ -79,10 +79,16 @@ python -m agent.run_discovery \
 # module docstring)
 python -m agent.augment_artifact --capability-name lookup_member_balance
 
-# 3. Replay: deterministic, no LLM call
+# 3. Review: discovery only ever produces a DRAFT, and a draft is refused
+# for unattended replay. Read what it will do, then approve it. Approval is
+# bound to a hash of the reviewed content; editing the artifact voids it.
+python -m artifacts.review show lookup_member_balance
+python -m artifacts.review approve lookup_member_balance --reviewer "$USER"
+
+# 4. Replay: deterministic, no LLM call
 python -m replay.run_replay --capability-name lookup_member_balance --param member_id=10001
 
-# 4. Replay hitting a real exceptional state — a member that doesn't exist
+# 5. Replay hitting a real exceptional state — a member that doesn't exist
 # is a named business outcome, not a crash
 python -m replay.run_replay --capability-name lookup_member_balance --param member_id=99999
 ```
@@ -118,7 +124,9 @@ target_app/          the mock legacy servicer console (Flask, server-rendered,
                       no test IDs, seeded error-injection knobs)
 artifacts/schema/     the capability artifact contract (Pydantic) + the
                       replay result contract
-artifacts/repository.py   flat-file artifact store (artifacts/store/)
+artifacts/repository.py   flat-file artifact store (artifacts/store/), one immutable
+                          file per version
+artifacts/review.py       the draft -> approved | rejected gate
 agent/                discovery: browser surface, locator inference,
                       LLM tool-use loop, artifact assembly, augmentation pass
 replay/               deterministic replay: locator resolution, the executor

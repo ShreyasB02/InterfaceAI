@@ -26,6 +26,7 @@ from escalation.control_channel import ControlChannel  # noqa: E402
 from escalation.simulated_operator import simulate_operator_takeover  # noqa: E402
 from artifacts.schema import (  # noqa: E402
     ActionType,
+    ArtifactStatus,
     LocatorMethod,
     LocatorSpec,
     LocatorStrategy,
@@ -33,6 +34,7 @@ from artifacts.schema import (  # noqa: E402
     Step,
 )
 from guardrails.allowlist import Allowlist  # noqa: E402
+from artifacts.review import approve  # noqa: E402
 
 EVIDENCE_ROOT = Path("/tmp/cua_replay_test_evidence")
 
@@ -214,6 +216,7 @@ def test_hard_failure_unresolvable_locator():
     step.timeout_ms = 500
     step.target = LocatorSpec(strategies=[LocatorStrategy(
         method=LocatorMethod.ROLE, value="button", role_name="No Such Button", reasoning="test: cannot resolve")])
+    approve(artifact, "test")  # content changed, so it needs a fresh approval to run
     ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
     result = ex.run({"member_id": "10001"})
     assert result.outcome == ReplayOutcome.FAILURE, result.model_dump()
@@ -242,6 +245,7 @@ def test_missing_declared_output_is_failure():
     not yield a success with a hole in it."""
     artifact = build_lookup_member_balance_fixture()
     artifact.steps = [s for s in artifact.steps if s.output_name != "savings_balance"]
+    approve(artifact, "test")
     ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
     result = ex.run({"member_id": "10001"})
     assert result.outcome == ReplayOutcome.FAILURE, result.model_dump()
@@ -258,6 +262,7 @@ def test_locator_fallback_is_reported():
     step.timeout_ms = 500
     step.target.strategies.insert(0, LocatorStrategy(
         method=LocatorMethod.CSS, value="button#renamed-by-vendor", reasoning="test: drifted primary"))
+    approve(artifact, "test")
     ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
     result = ex.run({"member_id": "10001"})
     assert result.outcome == ReplayOutcome.SUCCESS, result.model_dump()
@@ -273,7 +278,7 @@ def test_assert_text_step():
         artifact = build_lookup_member_balance_fixture()
         artifact.steps.append(Step(step_id="s_assert", intent="Confirm the member detail page is showing.",
                                    action=ActionType.ASSERT_TEXT, value_literal=text, timeout_ms=500))
-        return artifact
+        return approve(artifact, "test")
 
     ok = ReplayExecutor(with_assert("Alice Rivera"), fresh_evidence_root(), headless=True).run({"member_id": "10001"})
     assert ok.outcome == ReplayOutcome.SUCCESS, ok.model_dump()
@@ -282,6 +287,52 @@ def test_assert_text_step():
     assert bad.outcome == ReplayOutcome.FAILURE, bad.model_dump()
     assert bad.failure.step_id == "s_assert", bad.failure
     print("PASS: assert_text step ->", ok.outcome, "/", bad.outcome, bad.failure.observed[:60])
+
+
+def _as_draft(artifact):
+    artifact.status = ArtifactStatus.DRAFT
+    artifact.review = None
+    return artifact
+
+
+def test_draft_is_refused_unattended_and_runs_attended():
+    """A discovery output is a draft. It never replays unattended; a person
+    validating it can run it attended. The refusal happens before a browser
+    opens and still leaves a result.json behind."""
+    ex = ReplayExecutor(_as_draft(build_lookup_member_balance_fixture()), fresh_evidence_root(), headless=True)
+    refused = ex.run({"member_id": "10001"})
+    assert refused.outcome == ReplayOutcome.REFUSED, refused.model_dump()
+    assert refused.steps_executed == 0 and "draft" in refused.failure.observed
+    assert (ex.evidence_dir / "result.json").exists()
+
+    ex = ReplayExecutor(_as_draft(build_lookup_member_balance_fixture()), fresh_evidence_root(), headless=True)
+    attended = ex.run({"member_id": "10001"}, attended=True)
+    assert attended.outcome == ReplayOutcome.SUCCESS, attended.model_dump()
+    print("PASS: draft refused unattended, runs attended ->", refused.outcome, "/", attended.outcome)
+
+
+def test_draft_cannot_auto_approve_irreversible_step():
+    """auto_approve means 'the artifact's review is the confirmation'. A
+    draft has no review, so even attended it can't skip the human."""
+    ex = ReplayExecutor(_as_draft(build_open_sub_account_fixture()), fresh_evidence_root(), headless=True)
+    result = ex.run({"member_id": "10002", "nickname": "Rainy Day", "initial_deposit": "100"},
+                    auto_approve=True, attended=True)
+    assert result.outcome == ReplayOutcome.REFUSED, result.model_dump()
+    assert "auto-approved" in result.failure.observed, result.failure
+    print("PASS: draft + auto_approve refused ->", result.outcome)
+
+
+def test_edit_after_approval_voids_it():
+    """Approval is bound to a hash of what was reviewed. Changing a step
+    afterwards voids it, attended or not."""
+    artifact = build_lookup_member_balance_fixture()
+    artifact.steps[2].target.strategies[0].role_name = "Delete Member"
+    for attended in (False, True):
+        ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+        result = ex.run({"member_id": "10001"}, attended=attended)
+        assert result.outcome == ReplayOutcome.REFUSED, result.model_dump()
+        assert "changed since it was reviewed" in result.failure.observed, result.failure
+    print("PASS: edit after approval voids the approval ->", result.outcome)
 
 
 if __name__ == "__main__":
@@ -300,4 +351,7 @@ if __name__ == "__main__":
     test_missing_declared_output_is_failure()
     test_locator_fallback_is_reported()
     test_assert_text_step()
+    test_draft_is_refused_unattended_and_runs_attended()
+    test_draft_cannot_auto_approve_irreversible_step()
+    test_edit_after_approval_voids_it()
     print("\nALL REPLAY SCENARIO TESTS PASSED")

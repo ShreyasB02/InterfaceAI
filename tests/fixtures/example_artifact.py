@@ -7,6 +7,7 @@ any confusion between the two.
 """
 from datetime import datetime, timezone
 
+from artifacts.review import approve
 from artifacts.schema import (
     ActionType,
     CapabilityArtifact,
@@ -29,7 +30,7 @@ from artifacts.schema import (
 
 
 def build_lookup_member_balance_fixture(base_url: str = "http://127.0.0.1:5055") -> CapabilityArtifact:
-    return CapabilityArtifact(
+    artifact = CapabilityArtifact(
         artifact_id="fixture-lookup-member-balance",
         name="lookup_member_balance",
         version="1.0.0",
@@ -170,13 +171,15 @@ def build_lookup_member_balance_fixture(base_url: str = "http://127.0.0.1:5055")
         ],
         default_risk_level=RiskLevel.SAFE,
     )
+    # Fixtures stand in for artifacts a person has already reviewed.
+    return approve(artifact, reviewer="test-fixture")
 
 def build_open_sub_account_fixture(base_url: str = "http://127.0.0.1:5055") -> CapabilityArtifact:
     """Covers the richer flow: multi-field form, a confirmation step with a
     native dialog, and (via known_outcomes) two named business outcomes.
     Used to unit-test escalation and business-outcome handling in the
     replay engine without needing a real discovery run for every scenario."""
-    return CapabilityArtifact(
+    artifact = CapabilityArtifact(
         artifact_id="fixture-open-sub-account",
         name="open_sub_account",
         version="1.0.0",
@@ -279,3 +282,5 @@ def build_open_sub_account_fixture(base_url: str = "http://127.0.0.1:5055") -> C
         ],
         default_risk_level=RiskLevel.SAFE,
     )
+    # Fixtures stand in for artifacts a person has already reviewed.
+    return approve(artifact, reviewer="test-fixture")

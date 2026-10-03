@@ -11,6 +11,13 @@ structurally distinct rather than collapsing them into a boolean:
                         caller mistake, not something the automation did
                         wrong, and a production caller should react to it
                         differently (fix the call, don't just retry it).
+  REFUSED              - policy would not let this artifact run under these
+                        conditions: an unreviewed draft invoked unattended,
+                        an approval that no longer matches the content, a
+                        rejected artifact (guardrails/risk_policy.py). Like
+                        INPUT_ERROR it is returned before the browser opens,
+                        but the caller can't fix it by changing params — the
+                        artifact needs a human review.
   SUCCESS            - the goal was achieved; `outputs` is populated per
                         the artifact's output_schema.
   BUSINESS_OUTCOME    - the flow completed and reached a *named, expected*
@@ -57,6 +64,7 @@ from pydantic import BaseModel, Field
 
 class ReplayOutcome(str, Enum):
     INPUT_ERROR = "input_error"  # caller's params invalid; browser never opened
+    REFUSED = "refused"  # artifact not approved for this kind of run; browser never opened
     SUCCESS = "success"
     BUSINESS_OUTCOME = "business_outcome"
     FAILURE = "failure"

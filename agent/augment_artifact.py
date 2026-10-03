@@ -19,6 +19,7 @@ import argparse
 from typing import Optional
 
 from artifacts import repository
+from artifacts.schema import ArtifactStatus
 from artifacts.schema import (
     ActionType,
     CapabilityArtifact,
@@ -142,7 +143,11 @@ def main():
     artifact = repository.load(args.capability_name, args.version)
     before = (len(artifact.known_outcomes), len(artifact.recoverable_patterns))
     artifact = AUGMENTATIONS[args.capability_name](artifact)
+    # New content is a new version, and nobody has reviewed it yet. The
+    # version it was derived from stays in the store untouched.
     artifact.version = _bump_minor(artifact.version)
+    artifact.status = ArtifactStatus.DRAFT
+    artifact.review = None
 
     path = repository.save(artifact)
     after = (len(artifact.known_outcomes), len(artifact.recoverable_patterns))

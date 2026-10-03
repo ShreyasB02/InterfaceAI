@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --------------------------------------------------------------------------
@@ -201,6 +201,8 @@ class RecoverablePattern(BaseModel):
 # --------------------------------------------------------------------------
 
 class DiscoveryProvenance(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())  # model_provider / model_name are our own fields
+
     goal: str
     discovery_run_id: str
     model_provider: str
@@ -221,8 +223,19 @@ class TargetSurface(BaseModel):
 
 
 class ArtifactStatus(str, Enum):
-    DRAFT = "draft"
-    APPROVED = "approved"
+    DRAFT = "draft"        # what discovery produces; never replayed unattended
+    APPROVED = "approved"  # a human reviewed exactly this content (see ReviewRecord)
+    REJECTED = "rejected"  # reviewed and found unfit; never replayed
+
+
+class ReviewRecord(BaseModel):
+    """Who decided, when, and a hash of what they were looking at. An
+    approval only counts while the artifact's content still matches
+    `content_hash` (artifacts/review.py)."""
+    reviewed_by: str
+    reviewed_at: datetime
+    notes: Optional[str] = None
+    content_hash: str = Field(description="sha256 over the fields replay executes, at review time.")
 
 
 # --------------------------------------------------------------------------
@@ -237,6 +250,7 @@ class CapabilityArtifact(BaseModel):
     description: str = Field(description="What this capability does — for a human reviewer "
                               "and a calling agent deciding whether to invoke it.")
     status: ArtifactStatus = ArtifactStatus.DRAFT
+    review: Optional[ReviewRecord] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     provenance: DiscoveryProvenance
@@ -250,6 +264,3 @@ class CapabilityArtifact(BaseModel):
     recoverable_patterns: list[RecoverablePattern] = Field(default_factory=list)
 
     default_risk_level: RiskLevel = RiskLevel.SAFE
-
-    class Config:
-        use_enum_values = False

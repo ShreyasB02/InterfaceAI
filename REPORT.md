@@ -32,7 +32,7 @@ target_app  <--browser-->  replay (executor)  <-------------------+
 **Single process, synchronous, flat-file storage.** No queue, no service
 boundary, no database. Artifacts are small JSON documents a human should be
 able to `cat` and review; a directory of them (`artifacts/store/*.json`,
-named `<name>.v<major>.json`) gives free versioning and diffability for
+one immutable file per version, `<name>.v<semver>.json`) gives versioning and diffability for
 free. The brief is explicit that scaling infrastructure isn't the point of
 this exercise and that over-building it is a negative signal — everything
 here is designed so that a queue, a service split, or a real DB could be
@@ -105,14 +105,23 @@ A `CapabilityArtifact` (`artifacts/schema/artifact.py`) has:
 - **`provenance`**: goal, discovery run id, model, timestamp, and a
   *pointer* to the raw transcript under `/evidence/` — never the transcript
   itself. The artifact is decoupled from how it was discovered, on purpose.
-- **`status: draft | approved`**: a fresh discovery output is `draft` by
-  construction; nothing here treats a draft artifact as safe for
-  unattended replay of an irreversible step (`guardrails/risk_policy.py`).
+- **`status: draft | approved | rejected`** plus a **`review`** record
+  (who, when, notes, and a hash of the content they reviewed). Discovery
+  only ever emits a `draft`. The replay engine itself refuses to run a
+  draft unattended, returning `REFUSED` before a browser opens; a person
+  can run one attended to validate it, and approves it with
+  `python -m artifacts.review approve`. The approval is bound to a sha256
+  over everything replay executes (steps, locators, I/O contract,
+  checkpoint, outcome and recovery rules), so editing an approved artifact
+  voids its approval. `base_url` is deliberately outside the hash: the same
+  reviewed flow is dispatched to different tenants' hosts (§4).
 
-Filename versioning (`<name>.v<major>.json`) plus a `version` field
-gives cheap, reviewable history: `ls artifacts/store/` shows every
-capability and, via `agent/augment_artifact.py`'s minor-version bumps, every
-revision of its outcome/recovery metadata.
+Every version is its own immutable file (`<name>.v<semver>.json`); the
+store refuses to overwrite one. A re-discovery records the next major
+version, the outcome/recovery authoring pass records the next minor, and
+each new version starts as an unreviewed `draft`. `ls artifacts/store/` is
+the full history, and an unpinned unattended replay resolves to the latest
+*approved* version, never to a newer draft.
 
 ## 3. Determinism & error handling
 
@@ -187,22 +196,23 @@ markers without touching step semantics — the ranked-list structure of
 `LocatorSpec` was designed with exactly this insertion point in mind, I
 just didn't build the override-resolution code itself.
 
-**Drift detection.** The natural signal already exists in the result
-contract: track, per tenant, which strategy index in each step's
-`LocatorSpec` actually resolved (`ResolvedLocator.strategy_index`). A
-tenant whose primary (index-0) strategy stops resolving and consistently
-falls back to index 2 is showing drift *before* it becomes an outright
-failure — that's a monitoring signal I'd build on top of the existing
-`ReplayResult`, not a new mechanism.
+**Drift detection.** The signal is in the result contract: every step logs
+which strategy index in its `LocatorSpec` resolved, and
+`ReplayResult.locator_fallbacks` lists each step that had to fall back past
+its primary strategy. A tenant whose index-0 strategy stops resolving and
+keeps falling back to index 2 is showing drift *before* it becomes an
+outright failure. What isn't built is the aggregation: trending that field
+per tenant and flagging the artifact for re-review.
 
 ## 5. Escalation & handoff
 
 Detection: any step with `requires_confirmation=True` (in practice, an
 irreversible click discovery observed triggering a real confirmation
 dialog) is never auto-executed unless the run was explicitly invoked with
-`--auto-approve` (logged, meant for repeatable testing/demo — never
-appropriate for an unreviewed `draft` artifact in real unattended
-production replay; see `guardrails/risk_policy.py`).
+`--auto-approve`. That flag means "the review that approved this artifact
+stands as the confirmation for its risky step", so the engine refuses it
+for a `draft`: an unreviewed artifact can never skip the human (see
+`guardrails/risk_policy.py`).
 
 **The handoff is real, not mocked.** Replay launches Chromium with
 `--remote-debugging-port` open from the start. On hitting an escalation

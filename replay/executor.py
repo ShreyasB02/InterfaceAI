@@ -41,7 +41,7 @@ from escalation.control_channel import ControlChannel
 from escalation.transport import ControlSignal, EscalationAbandoned, InterventionTimedOut, RunInterrupted
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.redaction import redact_dict, redact_text
-from guardrails.risk_policy import needs_escalation
+from guardrails.risk_policy import needs_escalation, replay_refusal
 from guardrails.safety import safe_screenshot
 from replay.locator_resolver import LocatorResolutionError, ResolvedLocator, build_locator, describe, resolve
 
@@ -244,26 +244,44 @@ class ReplayExecutor:
 
     # -- main entry point ----------------------------------------------------
 
+    def _preflight_result(self, outcome: ReplayOutcome, started_at: datetime, expected: str,
+                          observed: str) -> ReplayResult:
+        """A run that is turned away before the browser opens. Still leaves
+        a log line and a result.json, so a refusal is as auditable as a run."""
+        result = ReplayResult(
+            outcome=outcome, artifact_id=self.artifact.artifact_id,
+            artifact_version=self.artifact.version, run_id=self.run_id,
+            started_at=started_at, finished_at=datetime.now(timezone.utc),
+            failure={"step_id": "preflight", "expected": expected, "observed": observed, "message": observed},
+            evidence_path=f"evidence/replay/{self.run_id}/",
+        )
+        self._log({"event": "run_not_started", "outcome": outcome.value, "artifact": self.artifact.name,
+                   "version": self.artifact.version, "reason": observed})
+        (self.evidence_dir / "result.json").write_text(result.model_dump_json(indent=2))
+        return result
+
     def run(self, params: dict, base_url: Optional[str] = None, auto_approve: bool = False,
+            attended: bool = False,
             escalation_timeout_s: Optional[float] = None,
             on_escalation: Optional[Callable[[ControlChannel, dict], None]] = None) -> ReplayResult:
         started_at = datetime.now(timezone.utc)
         self._base_url = base_url or self.artifact.target.base_url
 
+        # Policy first: is this artifact allowed to run this way at all?
+        # Enforced here, not in the CLI, so no caller can route around it.
+        refusal = replay_refusal(self.artifact, attended=attended, auto_approve=auto_approve)
+        if refusal:
+            return self._preflight_result(ReplayOutcome.REFUSED, started_at,
+                                          "an artifact approved for this kind of run", refusal)
+
         err = validate_required_params(self.artifact, params)
         if err:
-            return ReplayResult(
-                outcome=ReplayOutcome.INPUT_ERROR, artifact_id=self.artifact.artifact_id,
-                artifact_version=self.artifact.version, run_id=self.run_id,
-                started_at=started_at, finished_at=datetime.now(timezone.utc),
-                failure={"step_id": "preflight", "expected": "valid input params",
-                         "observed": err, "message": err},
-                evidence_path=f"evidence/replay/{self.run_id}/",
-            )
+            return self._preflight_result(ReplayOutcome.INPUT_ERROR, started_at, "valid input params", err)
 
         self.allowlist.check_url(self._base_url.rstrip("/") + "/")
         self._log({"event": "run_started", "artifact": self.artifact.name,
-                    "version": self.artifact.version, "params": redact_dict(params)})
+                    "version": self.artifact.version, "status": self.artifact.status.value,
+                    "attended": attended, "auto_approve": auto_approve, "params": redact_dict(params)})
 
         control = ControlChannel(self.run_id, self.evidence_dir)
         outputs: dict = {}

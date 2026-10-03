@@ -168,7 +168,7 @@ class DiscoveryRun:
     def __init__(self, *, capability_name: str, goal: str, base_url: str, entry_path: str,
                  params: dict[str, str], outputs: list[dict], evidence_root: Path,
                  param_types: Optional[dict[str, str]] = None, headless: bool = True,
-                 vision: bool = True, llm=None):
+                 vision: bool = True, llm=None, artifact_version: str = "1.0.0"):
         self.capability_name = capability_name
         self.goal = goal
         self.base_url = base_url
@@ -183,6 +183,7 @@ class DiscoveryRun:
         # path, or a deliberate text-only comparison run, shouldn't require
         # code changes.
         self.vision = vision
+        self.artifact_version = artifact_version
 
         self.run_id = f"{capability_name}_{datetime.now().strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}"
         self.evidence_dir = evidence_root / self.run_id
@@ -476,7 +477,7 @@ class DiscoveryRun:
         artifact = CapabilityArtifact(
             artifact_id=str(uuid.uuid4()),
             name=self.capability_name,
-            version="1.0.0",
+            version=self.artifact_version,
             description=f"{self.goal} — {summary or ''}".strip(" —"),
             provenance=DiscoveryProvenance(
                 goal=self.goal,

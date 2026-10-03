@@ -33,6 +33,10 @@ python -m agent.run_discovery \
 python -m agent.augment_artifact --capability-name lookup_member_balance
 python -m agent.augment_artifact --capability-name open_sub_account
 
+# 3b. Review and approve — a draft is refused for unattended replay
+python -m artifacts.review approve lookup_member_balance --reviewer "$USER"
+python -m artifacts.review approve open_sub_account --reviewer "$USER"
+
 # 4. Replay: happy path
 python -m replay.run_replay --capability-name lookup_member_balance --param member_id=10001
 

@@ -87,6 +87,9 @@ def main():
         headless=not args.headed,
         vision=not args.no_vision,
         llm=llm,
+        # Re-discovering an existing capability records the next major
+        # version; earlier versions stay in the store.
+        artifact_version=repository.next_major_version(args.capability_name),
     )
 
     print(f"Starting discovery run {run.run_id}")
@@ -119,7 +122,9 @@ def main():
         sys.exit(1)
 
     path = repository.save(artifact)
-    print(f"\nSuccess. Artifact saved to {path}")
+    print(f"\nSuccess. Artifact v{artifact.version} saved to {path} as a DRAFT.")
+    print(f"Review it:  python -m artifacts.review show {artifact.name}")
+    print(f"Approve it: python -m artifacts.review approve {artifact.name} --reviewer <you>")
     print(f"Steps recorded: {len(artifact.steps)}")
     print(f"Evidence: {run.evidence_dir}")
 

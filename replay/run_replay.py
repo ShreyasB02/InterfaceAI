@@ -64,14 +64,19 @@ def _parse_param(s: str) -> tuple[str, str]:
 def main():
     parser = argparse.ArgumentParser(description="Deterministically replay a saved capability artifact.")
     parser.add_argument("--capability-name", required=True)
-    parser.add_argument("--version", default=None, help="Artifact major version, defaults to latest.")
+    parser.add_argument("--version", default=None,
+                         help="Exact version (1.1.0) or prefix (1). Defaults to the latest approved "
+                              "version, or the latest of any status with --attended.")
+    parser.add_argument("--attended", action="store_true",
+                         help="A person is running this to validate the artifact. Allows a draft to "
+                              "run; its risky steps still escalate. Without this flag only an "
+                              "approved artifact replays.")
     parser.add_argument("--param", action="append", default=[], type=_parse_param, dest="params")
     parser.add_argument("--target-base-url", default=os.environ.get("TARGET_APP_BASE_URL", "http://127.0.0.1:5055"))
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--auto-approve", action="store_true",
-                         help="Bypass human escalation for irreversible steps. For repeatable "
-                              "testing/demo only — never appropriate for an unreviewed artifact "
-                              "in real unattended production replay.")
+                         help="Don't escalate irreversible steps: the review that approved the "
+                              "artifact stands as their confirmation. Refused for a draft.")
     parser.add_argument("--simulate-operator", default=None, metavar="BUTTON_LABEL",
                          help="If escalation is hit, reattach via CDP and click this button, "
                               "proving the handoff mechanism without a human physically present.")
@@ -104,7 +109,8 @@ def main():
         sys.exit(1)
 
     try:
-        artifact = repository.load(args.capability_name, args.version)
+        artifact = repository.load(args.capability_name, args.version,
+                                   approved_only=not args.attended and args.version is None)
     except FileNotFoundError as e:
         print(f"Could not load artifact: {e}", file=sys.stderr)
         sys.exit(1)
@@ -177,6 +183,7 @@ def main():
             params,
             base_url=args.target_base_url,
             auto_approve=args.auto_approve,
+            attended=args.attended,
             escalation_timeout_s=args.escalation_timeout,
             on_escalation=on_escalation,
         )
@@ -192,7 +199,7 @@ def main():
         print(f"Evidence (if any) is at {executor.evidence_dir}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\nOutcome: {result.outcome}")
+    print(f"\nOutcome: {result.outcome.value}")
     print(json.dumps(result.model_dump(mode="json"), indent=2, default=str))
 
 

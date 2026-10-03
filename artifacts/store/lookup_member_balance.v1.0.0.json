@@ -1,0 +1,178 @@
+{
+  "artifact_id": "9d27626c-b372-4ec2-bee1-30ebeca25f58",
+  "name": "lookup_member_balance",
+  "version": "1.0.0",
+  "description": "Look up member 10001 and read their current savings balance. — Looked up member 10001 (Alice Rivera) and retrieved their current savings balance of $8150.32.",
+  "status": "draft",
+  "created_at": "2026-09-27T18:52:45.665064Z",
+  "provenance": {
+    "goal": "Look up member 10001 and read their current savings balance.",
+    "discovery_run_id": "lookup_member_balance_20260927T115235_5cb009",
+    "model_provider": "google",
+    "model_name": "gemini-3.8-flash",
+    "recorded_at": "2026-09-27T18:52:45.664994Z",
+    "evidence_path": "evidence/discovery/lookup_member_balance_20260927T115235_5cb009/"
+  },
+  "target": {
+    "surface_type": "legacy_web",
+    "base_url": "http://127.0.0.1:5055",
+    "entry_path": "/members/search",
+    "vendor_product": "ACME Core Servicer Terminal"
+  },
+  "input_schema": [
+    {
+      "name": "member_id",
+      "type": "string",
+      "required": true,
+      "description": "Value for member_id.",
+      "example": "10001",
+      "validation_pattern": null
+    }
+  ],
+  "output_schema": [
+    {
+      "name": "member_name",
+      "type": "string",
+      "description": "Member's full name"
+    },
+    {
+      "name": "savings_balance",
+      "type": "number",
+      "description": "Current savings balance in USD"
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "s1",
+      "intent": "Navigate to the starting page for this capability.",
+      "action": "navigate",
+      "target": null,
+      "value_literal": "/members/search",
+      "value_param": null,
+      "output_name": null,
+      "on_dialog": null,
+      "timeout_ms": 5000,
+      "risk_level": "safe",
+      "requires_confirmation": false
+    },
+    {
+      "step_id": "s2",
+      "intent": "Fill the 'Member ID' field with a supplied value",
+      "action": "fill",
+      "target": {
+        "strategies": [
+          {
+            "method": "css",
+            "value": "input[name=\"member_id\"]",
+            "role_name": null,
+            "reasoning": "The 'member_id' name attribute is what the server actually reads on form submit, so it's tied to the app's real contract and survives a visual re-skin even with no id or test-id attributes."
+          }
+        ]
+      },
+      "value_literal": null,
+      "value_param": "member_id",
+      "output_name": null,
+      "on_dialog": null,
+      "timeout_ms": 5000,
+      "risk_level": "safe",
+      "requires_confirmation": false
+    },
+    {
+      "step_id": "s3",
+      "intent": "Click 'Search' button",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "method": "role",
+            "value": "button",
+            "role_name": "Search",
+            "reasoning": "Accessible role+name ('button', \"Search\") targets what a user actually reads, which survives markup restructuring better than a positional selector."
+          }
+        ]
+      },
+      "value_literal": null,
+      "value_param": null,
+      "output_name": null,
+      "on_dialog": null,
+      "timeout_ms": 5000,
+      "risk_level": "safe",
+      "requires_confirmation": false
+    },
+    {
+      "step_id": "s4",
+      "intent": "Click 'View Member' button",
+      "action": "click",
+      "target": {
+        "strategies": [
+          {
+            "method": "role",
+            "value": "button",
+            "role_name": "View Member",
+            "reasoning": "Accessible role+name ('button', \"View Member\") targets what a user actually reads, which survives markup restructuring better than a positional selector."
+          }
+        ]
+      },
+      "value_literal": null,
+      "value_param": null,
+      "output_name": null,
+      "on_dialog": null,
+      "timeout_ms": 5000,
+      "risk_level": "safe",
+      "requires_confirmation": false
+    },
+    {
+      "step_id": "s5",
+      "intent": "Read the 'Name' value into member_name",
+      "action": "extract",
+      "target": {
+        "strategies": [
+          {
+            "method": "xpath",
+            "value": "//tr[td[normalize-space()='Name']]/td[2]",
+            "role_name": null,
+            "reasoning": "Label-relative XPath: locates the value cell by its row's label cell text rather than position, so row reordering doesn't break it."
+          }
+        ]
+      },
+      "value_literal": null,
+      "value_param": null,
+      "output_name": "member_name",
+      "on_dialog": null,
+      "timeout_ms": 5000,
+      "risk_level": "safe",
+      "requires_confirmation": false
+    },
+    {
+      "step_id": "s6",
+      "intent": "Read the 'Savings' value into savings_balance",
+      "action": "extract",
+      "target": {
+        "strategies": [
+          {
+            "method": "xpath",
+            "value": "//tr[td[normalize-space()='Savings']]/td[3]",
+            "role_name": null,
+            "reasoning": "Label-relative XPath: locates the value cell by its row's label cell text rather than position, so row reordering doesn't break it."
+          }
+        ]
+      },
+      "value_literal": null,
+      "value_param": null,
+      "output_name": "savings_balance",
+      "on_dialog": null,
+      "timeout_ms": 5000,
+      "risk_level": "safe",
+      "requires_confirmation": false
+    }
+  ],
+  "checkpoint": {
+    "description": "The Member Detail page for member 10001 is visible with Accounts table displaying Savings account SAV-10001-01 and balance $8150.32.",
+    "method": "url_matches",
+    "value": "/members/{member_id}",
+    "target": null
+  },
+  "known_outcomes": [],
+  "recoverable_patterns": [],
+  "default_risk_level": "safe"
+}
