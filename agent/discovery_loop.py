@@ -55,6 +55,7 @@ from agent.llm_client import LLMClient
 from agent.locator_inference import derive_locator_strategies
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.redaction import redact_dict
+from guardrails.tokenizer import TOKEN_EXPLAINER, Tokenizer
 
 EMPLOYEE_ID = "EMP001"
 PASSCODE = "demo1234"
@@ -83,8 +84,13 @@ def _infer_param_type(name: str, value: str, declared: dict[str, str]) -> ParamT
 
 
 def _build_system_prompt(goal: str, entry_path: str, params: dict[str, str],
-                          outputs: list[dict]) -> str:
-    param_lines = "\n".join(f"  - {k} = {v!r}" for k, v in params.items()) or "  (none)"
+                          outputs: list[dict], tokenizer: Tokenizer, vision: bool) -> str:
+    # Param VALUES are tokenized (see guardrails/tokenizer.py) before ever
+    # landing in this prompt — an ordinary-looking ID like a member_id
+    # won't match any sensitive shape and passes through unchanged, but a
+    # param that happens to look like a card/account/SSN/dollar-amount
+    # value is shown to the model only as a placeholder.
+    param_lines = "\n".join(f"  - {k} = {tokenizer.tokenize(str(v))!r}" for k, v in params.items()) or "  (none)"
     output_lines = "\n".join(f"  - {o['name']} ({o['type']}): {o['description']}" for o in outputs) or "  (none)"
     return f"""You are operating a legacy, server-rendered core-banking servicer console \
 on behalf of a bank employee, to accomplish one specific goal. You interact with the page \
@@ -108,6 +114,12 @@ labels are the adjacent table cell's text, shown to you in each element's "label
   - Every tool call's result includes the current page state (url, page text, and the \
 full list of currently visible interactive elements with their indices) — always act on \
 the LATEST list of elements, never one from an earlier turn.
+  - {"Alongside that text description, you are also shown a current screenshot of the page "
+     "each turn. Use it to visually confirm layout, disambiguate elements that look similar "
+     "in the text list, and notice anything the text description alone might miss."
+     if vision else
+     "You are not shown a screenshot — rely on the text description and element list only."}
+  - {TOKEN_EXPLAINER}
   - Some pages take a few seconds to load; if the page you expect isn't there yet, use \
 wait_for_text rather than immediately assuming failure.
   - Some actions are genuinely irreversible (e.g. finalizing an account-opening action). If \
@@ -124,12 +136,17 @@ When the goal is genuinely achieved, call finish_success with a one-sentence sum
 description of what on the final page proves it (this becomes the artifact's checkpoint)."""
 
 
-def _format_observation_for_model(obs, action_note: Optional[str] = None) -> str:
+def _format_observation_for_model(obs, tokenizer: Tokenizer, action_note: Optional[str] = None) -> str:
+    # Page-derived text is tokenized (see guardrails/tokenizer.py) before it
+    # ever becomes part of the model's context — this is the boundary where
+    # raw page content would otherwise reach the LLM. Structural fields
+    # (tag/type/name/label) aren't tokenized: they're the app's own field
+    # naming, not scraped values.
     lines = []
     if action_note:
-        lines.append(action_note)
+        lines.append(tokenizer.tokenize(action_note))
     lines.append(f"URL: {obs.url}")
-    lines.append(f"Page text:\n{obs.page_text}")
+    lines.append(f"Page text:\n{tokenizer.tokenize(obs.page_text)}")
     lines.append("Visible interactive elements:")
     for el in obs.elements:
         bits = [f"index={el.index}", f"tag={el.tag}"]
@@ -140,9 +157,9 @@ def _format_observation_for_model(obs, action_note: Optional[str] = None) -> str
         if el.label:
             bits.append(f"label={el.label!r}")
         if el.text:
-            bits.append(f"text={el.text!r}")
+            bits.append(f"text={tokenizer.tokenize(el.text)!r}")
         if el.value:
-            bits.append(f"value={el.value!r}")
+            bits.append(f"value={tokenizer.tokenize(el.value)!r}")
         lines.append("  - " + ", ".join(bits))
     return "\n".join(lines)
 
@@ -150,7 +167,8 @@ def _format_observation_for_model(obs, action_note: Optional[str] = None) -> str
 class DiscoveryRun:
     def __init__(self, *, capability_name: str, goal: str, base_url: str, entry_path: str,
                  params: dict[str, str], outputs: list[dict], evidence_root: Path,
-                 param_types: Optional[dict[str, str]] = None, headless: bool = True):
+                 param_types: Optional[dict[str, str]] = None, headless: bool = True,
+                 vision: bool = True):
         self.capability_name = capability_name
         self.goal = goal
         self.base_url = base_url
@@ -159,6 +177,12 @@ class DiscoveryRun:
         self.param_types = param_types or {}
         self.outputs = outputs
         self.headless = headless
+        # Vision: attach a real screenshot to the model's context each turn
+        # (agent/llm_client.py), on top of the existing text/DOM-derived
+        # observation. Kept togglable — a provider outage on the image
+        # path, or a deliberate text-only comparison run, shouldn't require
+        # code changes.
+        self.vision = vision
 
         self.run_id = f"{capability_name}_{datetime.now().strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}"
         self.evidence_dir = evidence_root / self.run_id
@@ -167,9 +191,24 @@ class DiscoveryRun:
 
         self.allowlist = Allowlist.from_env()
         self.llm = LLMClient()
+        # One tokenizer per run (Tier 2 #6) — see guardrails/tokenizer.py.
+        # Its token map is purely in-memory and is discarded with this
+        # object; nothing about it is ever written to evidence.
+        self.tokenizer = Tokenizer()
 
         self.recorded_steps: list[Step] = []
         self._turn = 0
+
+    def _read_screenshot_bytes(self, relative_path: Optional[str]) -> Optional[bytes]:
+        if not relative_path:
+            return None
+        try:
+            return (self.evidence_dir / relative_path).read_bytes()
+        except OSError:
+            # Screenshot capture is already best-effort (safe_screenshot());
+            # if the file isn't there, just run this turn without vision
+            # rather than failing the whole run over it.
+            return None
 
     def _log(self, event: dict):
         if "tool_input" in event and isinstance(event["tool_input"], dict):
@@ -262,8 +301,11 @@ class DiscoveryRun:
             obs = browser.observe("initial")
             self._log({"event": "observe", "turn": 0, "url": obs.url, "n_elements": len(obs.elements)})
 
-            system_prompt = _build_system_prompt(self.goal, self.entry_path, self.params, self.outputs)
-            messages = [{"role": "user", "content": _format_observation_for_model(obs)}]
+            system_prompt = _build_system_prompt(
+                self.goal, self.entry_path, self.params, self.outputs, self.tokenizer, self.vision
+            )
+            messages = [{"role": "user", "content": _format_observation_for_model(obs, self.tokenizer)}]
+            latest_screenshot = self._read_screenshot_bytes(obs.screenshot_path) if self.vision else None
 
             start_time = time.time()
             extracted_outputs: dict[str, str] = {}
@@ -278,7 +320,7 @@ class DiscoveryRun:
                     raise DiscoveryFailed(f"Exceeded wall timeout ({WALL_TIMEOUT_S}s) without finishing.", self.run_id)
 
                 try:
-                    response = self.llm.decide(system_prompt, messages)
+                    response = self.llm.decide(system_prompt, messages, image_bytes=latest_screenshot)
                 except Exception as e:
                     # A raw provider-side error (rate limit, malformed
                     # response, a schema the provider's API rejects — the
@@ -299,6 +341,7 @@ class DiscoveryRun:
                     "assistant_text": assistant_text,
                     "tool_name": tool_use.name if tool_use else None,
                     "tool_input": tool_use.input if tool_use else None,
+                    "vision_attached": latest_screenshot is not None,
                 })
 
                 if tool_use is None:
@@ -322,11 +365,15 @@ class DiscoveryRun:
                     raise DiscoveryFailed(f"Agent reported stuck: {reason}", self.run_id)
 
                 try:
-                    result_text, action_kind, rec = self._execute_tool(browser, tool_use.name, tool_use.input)
+                    result_text, action_kind, rec, obs_for_shot = self._execute_tool(
+                        browser, tool_use.name, tool_use.input
+                    )
                     if action_kind is not None:
                         self._record_step_for_action(action_kind, rec)
                     if action_kind == "extract_field":
                         extracted_outputs[rec.output_name] = rec.extracted_value
+                    if self.vision and obs_for_shot is not None:
+                        latest_screenshot = self._read_screenshot_bytes(obs_for_shot.screenshot_path)
                 except AllowlistViolation:
                     raise
                 except Exception as e:  # noqa: BLE001 - deliberately broad: feed the error back to the model
@@ -341,10 +388,22 @@ class DiscoveryRun:
             return self._build_artifact(finish_summary, checkpoint_desc, extracted_outputs, final_url_path)
 
     def _execute_tool(self, browser: BrowserSurface, name: str, tool_input: dict):
+        """Returns (result_text, action_kind, rec, obs_for_screenshot). The
+        4th element is the freshest Observation produced by this call (or
+        None if the tool didn't re-observe the page), purely so run() can
+        pull the next turn's screenshot bytes off it — it's not otherwise
+        part of the model-facing contract.
+
+        Detokenization happens here, right before a token would drive a
+        real browser action (fill's value, wait_for_text's text) — the one
+        boundary where a placeholder minted by guardrails/tokenizer.py is
+        turned back into the real value it stands for. Everywhere else in
+        this file stays on the tokenized side of that boundary.
+        """
         if name == "navigate":
             rec = browser.navigate(tool_input["path"])
             obs = browser.observe(f"turn{self._turn}_navigate")
-            return _format_observation_for_model(obs, "Navigated."), "navigate", rec
+            return _format_observation_for_model(obs, self.tokenizer, "Navigated."), "navigate", rec, obs
 
         if name == "click":
             obs = browser.observe(f"turn{self._turn}_pre_click")
@@ -353,24 +412,36 @@ class DiscoveryRun:
             if rec.dialog_message:
                 note += f" A confirmation dialog appeared ({rec.dialog_message!r}) and was {rec.dialog_action}ed."
             obs2 = browser.observe(f"turn{self._turn}_post_click")
-            return _format_observation_for_model(obs2, note), "click", rec
+            return _format_observation_for_model(obs2, self.tokenizer, note), "click", rec, obs2
 
         if name == "fill":
             obs = browser.observe(f"turn{self._turn}_pre_fill")
-            rec = browser.fill(tool_input["index"], tool_input["value"], obs.elements)
+            raw_value = self.tokenizer.detokenize(tool_input["value"])
+            rec = browser.fill(tool_input["index"], raw_value, obs.elements)
             obs2 = browser.observe(f"turn{self._turn}_post_fill")
-            return _format_observation_for_model(obs2, "Filled."), "fill", rec
+            return _format_observation_for_model(obs2, self.tokenizer, "Filled."), "fill", rec, obs2
 
         if name == "wait_for_text":
-            rec = browser.wait_for_text(tool_input["text"], tool_input.get("timeout_ms", 8000))
+            raw_text = self.tokenizer.detokenize(tool_input["text"])
+            rec = browser.wait_for_text(raw_text, tool_input.get("timeout_ms", 8000))
             obs = browser.observe(f"turn{self._turn}_post_wait")
-            return _format_observation_for_model(obs, "Wait condition satisfied."), "wait_for_text", rec
+            return _format_observation_for_model(obs, self.tokenizer, "Wait condition satisfied."), \
+                "wait_for_text", rec, obs
 
         if name == "extract_field":
+            # Labels are the app's static field names (e.g. "Savings"), not
+            # scraped values, so they're never tokenized on the way out —
+            # detokenizing here is just defensive symmetry in case one ever
+            # is. The extracted VALUE (rec.extracted_value) always comes
+            # straight off the real DOM via browser.extract_field() and is
+            # what actually lands in the artifact's outputs — only the
+            # echo shown back to the model is tokenized below.
+            raw_label = self.tokenizer.detokenize(tool_input["label"])
             rec = browser.extract_field(
-                tool_input["label"], tool_input["output_name"], tool_input.get("cell_index", -1)
+                raw_label, tool_input["output_name"], tool_input.get("cell_index", -1)
             )
-            return f"Extracted {rec.output_name} = {rec.extracted_value!r}", "extract_field", rec
+            shown_value = self.tokenizer.tokenize(rec.extracted_value)
+            return f"Extracted {rec.output_name} = {shown_value!r}", "extract_field", rec, None
 
         raise ValueError(f"Unknown tool: {name}")
 
@@ -404,7 +475,7 @@ class DiscoveryRun:
             provenance=DiscoveryProvenance(
                 goal=self.goal,
                 discovery_run_id=self.run_id,
-                model_provider="anthropic",
+                model_provider="gemini",
                 model_name=self.llm.model,
                 recorded_at=datetime.now(timezone.utc),
                 evidence_path=f"evidence/discovery/{self.run_id}/",

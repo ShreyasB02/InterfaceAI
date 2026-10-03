@@ -16,6 +16,22 @@ Examples:
     python -m replay.run_replay --capability-name open_sub_account \\
         --param member_id=10001 --param nickname="Vacation Fund" --param initial_deposit=100 \\
         --simulate-operator "Confirm & Open Account"
+
+Tier 2 #7's other two exit paths can be demoed the same way, without a
+physically present operator:
+
+    # cancel a stuck escalation instead of resolving it -> reported as FAILURE
+    python -m replay.run_replay --capability-name open_sub_account \\
+        --param member_id=10001 --param nickname="Vacation Fund" --param initial_deposit=100 \\
+        --simulate-cancel-after 2
+
+    # interrupt the run outright, mid-automation -> ReplayOutcome.INTERRUPTED
+    python -m replay.run_replay --capability-name lookup_member_balance \\
+        --param member_id=10001 --simulate-interrupt-after 0.5
+
+    # take over on a step that was never flagged risky, then hand back
+    python -m replay.run_replay --capability-name lookup_member_balance \\
+        --param member_id=10001 --simulate-takeover-after 0
 """
 from __future__ import annotations
 
@@ -24,12 +40,14 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from artifacts import repository
 from artifacts.validate import validate_required_params
+from escalation.control_channel import ControlChannel
 from escalation.simulated_operator import simulate_operator_takeover
 from replay.executor import ReplayExecutor
 
@@ -57,10 +75,33 @@ def main():
     parser.add_argument("--simulate-operator", default=None, metavar="BUTTON_LABEL",
                          help="If escalation is hit, reattach via CDP and click this button, "
                               "proving the handoff mechanism without a human physically present.")
+    parser.add_argument("--simulate-cancel-after", type=float, default=None, metavar="SECONDS",
+                         help="Tier 2 #7's 'cancel': once an escalation is hit, wait this many "
+                              "seconds and then cancel it instead of resolving it — the run reports "
+                              "a FAILURE rather than hanging or timing out. Mutually exclusive with "
+                              "--simulate-operator / --simulate-takeover-after (only one on-escalation "
+                              "behavior can be simulated per run).")
+    parser.add_argument("--simulate-takeover-after", type=float, default=None, metavar="SECONDS",
+                         help="Tier 2 #7's 'takeover': wait this many seconds from run start, then "
+                              "request manual control on whatever step runs next — even one never "
+                              "flagged risky — then auto-resume shortly after, proving automation "
+                              "picks the same step back up rather than skipping it. Mutually "
+                              "exclusive with --simulate-operator / --simulate-cancel-after.")
+    parser.add_argument("--simulate-interrupt-after", type=float, default=None, metavar="SECONDS",
+                         help="Tier 2 #7's 'interrupt': wait this many seconds from run start, then "
+                              "end the run outright, whether or not an escalation is pending. "
+                              "Can be combined with any of the other --simulate-* flags.")
     parser.add_argument("--escalation-timeout", type=float, default=None,
                          help="Seconds to wait for a human before returning ESCALATED instead of blocking forever.")
     parser.add_argument("--evidence-root", default="evidence/replay")
     args = parser.parse_args()
+
+    exclusive = [args.simulate_operator, args.simulate_cancel_after, args.simulate_takeover_after]
+    if sum(1 for x in exclusive if x is not None) > 1:
+        print("Only one of --simulate-operator / --simulate-cancel-after / --simulate-takeover-after "
+              "may be used at a time (they each install a different on-escalation behavior). "
+              "--simulate-interrupt-after may be combined with any of them.", file=sys.stderr)
+        sys.exit(1)
 
     try:
         artifact = repository.load(args.capability_name, args.version)
@@ -90,6 +131,45 @@ def main():
                 daemon=True,
             )
             t.start()
+    elif args.simulate_cancel_after is not None:
+        def on_escalation(control, ctx):  # noqa: ANN001
+            def _cancel():
+                time.sleep(args.simulate_cancel_after)
+                control.cancel(reason=f"Simulated operator gave up after {args.simulate_cancel_after}s.")
+            threading.Thread(target=_cancel, daemon=True).start()
+    elif args.simulate_takeover_after is not None:
+        def on_escalation(control, ctx):  # noqa: ANN001
+            def _auto_resume():
+                time.sleep(0.5)  # models a brief look-around before handing back
+                control.mark_human_active()
+                control.record_human_action("Simulated operator looked around, nothing needed; handing back control.")
+                control.signal_resume()
+            threading.Thread(target=_auto_resume, daemon=True).start()
+
+    if args.simulate_takeover_after is not None:
+        # Unlike the other --simulate-* flags, this one has to act BEFORE
+        # the escalation exists (it's what causes one), on a control
+        # channel pointed at the same evidence dir the executor will use
+        # internally — same file, same cross-process coordination a real
+        # operator console or CDP simulator relies on.
+        control_for_takeover = ControlChannel(executor.run_id, executor.evidence_dir)
+
+        def _request_takeover():
+            time.sleep(args.simulate_takeover_after)
+            control_for_takeover.request_takeover(
+                reason=f"Simulated operator requested takeover {args.simulate_takeover_after}s into the run."
+            )
+        threading.Thread(target=_request_takeover, daemon=True).start()
+
+    if args.simulate_interrupt_after is not None:
+        control_for_interrupt = ControlChannel(executor.run_id, executor.evidence_dir)
+
+        def _request_interrupt():
+            time.sleep(args.simulate_interrupt_after)
+            control_for_interrupt.interrupt(
+                reason=f"Simulated operator interrupted the run {args.simulate_interrupt_after}s in."
+            )
+        threading.Thread(target=_request_interrupt, daemon=True).start()
 
     print(f"Replaying {artifact.name} v{artifact.version} (run {executor.run_id})")
     try:

@@ -28,6 +28,7 @@ from artifacts.schema import (
     ActionType,
     CapabilityArtifact,
     CheckpointMethod,
+    InterruptDetail,
     OutcomeMarker,
     RecoverablePattern,
     RecoveryAction,
@@ -36,7 +37,8 @@ from artifacts.schema import (
     Step,
 )
 from artifacts.validate import validate_required_params
-from escalation.control_channel import ControlChannel, InterventionTimedOut
+from escalation.control_channel import ControlChannel
+from escalation.transport import ControlSignal, EscalationAbandoned, InterventionTimedOut, RunInterrupted
 from guardrails.allowlist import Allowlist, AllowlistViolation
 from guardrails.redaction import redact_dict
 from guardrails.risk_policy import needs_escalation
@@ -210,6 +212,7 @@ class ReplayExecutor:
         business_outcome = None
         failure = None
         escalation = None
+        interrupted = None
         steps_executed = 0
 
         with sync_playwright() as pw:
@@ -224,6 +227,21 @@ class ReplayExecutor:
                 while i < len(steps):
                     step = steps[i]
                     current_step_id = step.step_id
+
+                    # Tier 2 #7: an interrupt can land at any step boundary,
+                    # not just while an escalation is already pending — check
+                    # it before anything else this iteration does. Raised as
+                    # RunInterrupted (a BaseException, not Exception — see
+                    # escalation/transport.py) so it can only be caught by
+                    # the explicit handler below, never by a broad
+                    # `except Exception` elsewhere mistaking an operator's
+                    # stop for a code failure.
+                    sig = control.pending_signal()
+                    if sig and sig.get("type") == ControlSignal.INTERRUPT:
+                        control.clear_signal()
+                        reason = sig.get("reason") or "Operator interrupted the run."
+                        self._log({"event": "run_interrupted", "step_id": step.step_id, "reason": reason})
+                        raise RunInterrupted(reason)
 
                     bo = self._check_known_outcomes(page, last_step_id) if last_step_id else None
                     if bo:
@@ -250,18 +268,29 @@ class ReplayExecutor:
                             outcome = ReplayOutcome.FAILURE
                             break
 
-                    escalate = needs_escalation(step, auto_approve)
-                    if step.action == ActionType.CLICK and escalate:
+                    # Tier 2 #7: a manual takeover request stands in for the
+                    # guardrail-driven `needs_escalation` check below — an
+                    # operator can grab the wheel on ANY step, not only a
+                    # CLICK the artifact flagged risky.
+                    manual_takeover = bool(sig) and sig.get("type") == ControlSignal.TAKEOVER
+                    risky_click = step.action == ActionType.CLICK and needs_escalation(step, auto_approve)
+
+                    if manual_takeover or risky_click:
+                        control.clear_signal()  # no-op if no signal was pending
                         shot = self._screenshot(page, f"pre_escalation_{step.step_id}")
                         req_id = str(uuid.uuid4())
+                        if manual_takeover and not risky_click:
+                            reason = sig.get("reason") or "Operator requested manual takeover."
+                        else:
+                            reason = (f"Step {step.step_id} ({step.intent}) is irreversible and requires "
+                                      "human confirmation before proceeding.")
                         control.request_intervention(
-                            reason=f"Step {step.step_id} ({step.intent}) is irreversible and requires "
-                                   "human confirmation before proceeding.",
-                            step_id=step.step_id, capability=self.artifact.name,
+                            reason=reason, step_id=step.step_id, capability=self.artifact.name,
                             screenshot_path=shot, cdp_endpoint=f"http://127.0.0.1:{self.cdp_port}",
                             intervention_request_id=req_id,
                         )
-                        self._log({"event": "escalation_requested", "step_id": step.step_id, "request_id": req_id})
+                        self._log({"event": "escalation_requested", "step_id": step.step_id,
+                                    "request_id": req_id, "manual_takeover": manual_takeover})
 
                         self._escalation_in_progress = True
                         if on_escalation:
@@ -275,22 +304,40 @@ class ReplayExecutor:
                                           "intervention.", "step_id": step.step_id,
                                           "intervention_request_id": req_id}
                             break
+                        except EscalationAbandoned as e:
+                            # Tier 2 #7's "cancel": an operator explicitly gave
+                            # up on this pending intervention rather than
+                            # leaving it to hang forever or wait out a
+                            # timeout. Reported as a controlled FAILURE, not
+                            # a hang and not a silent retry.
+                            outcome = ReplayOutcome.FAILURE
+                            failure = {"step_id": step.step_id, "expected": "a human to resolve the intervention",
+                                       "observed": "the pending escalation was cancelled by an operator",
+                                       "message": str(e)}
+                            self._log({"event": "escalation_cancelled", "step_id": step.step_id, "detail": str(e)})
+                            break
                         finally:
                             self._escalation_in_progress = False
 
-                        escalation = {"reason": "Irreversible step required human confirmation.",
-                                      "step_id": step.step_id, "intervention_request_id": req_id}
+                        escalation = {"reason": reason, "step_id": step.step_id, "intervention_request_id": req_id}
                         self._log({"event": "escalation_resumed", "human_actions": human_actions})
 
-                        # The human performed the click (and any dialog) themselves
-                        # on the live session. Skip this step and its paired
-                        # HANDLE_DIALOG step; continue from whatever comes next.
-                        i += 1
-                        if i < len(steps) and steps[i].action == ActionType.HANDLE_DIALOG:
+                        if risky_click:
+                            # The human performed the click (and any dialog)
+                            # themselves on the live session. Skip this step
+                            # and its paired HANDLE_DIALOG step; continue from
+                            # whatever comes next.
                             i += 1
-                        last_step_id = step.step_id
-                        steps_executed += 1
-                        continue
+                            if i < len(steps) and steps[i].action == ActionType.HANDLE_DIALOG:
+                                i += 1
+                            last_step_id = step.step_id
+                            steps_executed += 1
+                            continue
+
+                        # Manual takeover on a step automation still owns:
+                        # the operator handed control back rather than
+                        # performing the step itself, so fall through and
+                        # let automation execute this same step now.
 
                     # Pre-register dialog handling if the NEXT step says how
                     # to handle a dialog this click is expected to trigger.
@@ -321,6 +368,21 @@ class ReplayExecutor:
                                        "was not satisfied afterward.",
                         }
 
+            except RunInterrupted as e:
+                # Tier 2 #7's "interrupt". Caught explicitly, right here —
+                # this is the one place that owns turning "an operator
+                # stopped this" into a clean, typed result. Everywhere else
+                # in this codebase that has a broad `except Exception`
+                # backstop is safe from ever intercepting this instead,
+                # precisely because RunInterrupted subclasses BaseException
+                # (see escalation/transport.py).
+                try:
+                    shot = self._screenshot(page, "interrupted")
+                except Exception:
+                    shot = None
+                outcome = ReplayOutcome.INTERRUPTED
+                interrupted = InterruptDetail(step_id=current_step_id or "unknown", reason=e.reason)
+                self._log({"event": "run_interrupted_caught", "detail": e.reason, "screenshot": shot})
             except LocatorResolutionError as e:
                 shot = self._screenshot(page, "failure")
                 outcome = ReplayOutcome.FAILURE
@@ -352,7 +414,7 @@ class ReplayExecutor:
             outcome=outcome, artifact_id=self.artifact.artifact_id, artifact_version=self.artifact.version,
             run_id=self.run_id, started_at=started_at, finished_at=datetime.now(timezone.utc),
             outputs=typed_outputs, business_outcome=business_outcome, failure=failure, escalation=escalation,
-            recovered_steps=recovered_steps, steps_executed=steps_executed,
+            interrupted=interrupted, recovered_steps=recovered_steps, steps_executed=steps_executed,
             evidence_path=f"evidence/replay/{self.run_id}/",
         )
         (self.evidence_dir / "result.json").write_text(result.model_dump_json(indent=2))

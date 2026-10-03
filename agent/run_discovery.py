@@ -56,6 +56,10 @@ def main():
                               "Params default to string (safer for IDs that merely look numeric).")
     parser.add_argument("--output", action="append", default=[], type=_parse_output, dest="outputs")
     parser.add_argument("--headed", action="store_true", help="Show the browser window instead of running headless.")
+    parser.add_argument("--no-vision", action="store_true",
+                         help="Text-only observation, no screenshot attached to the model's context each "
+                              "turn (see agent/llm_client.py's decide(image_bytes=...)). Vision is on by "
+                              "default.")
     parser.add_argument("--evidence-root", default="evidence/discovery")
     args = parser.parse_args()
 
@@ -72,6 +76,7 @@ def main():
         outputs=args.outputs,
         evidence_root=Path(args.evidence_root),
         headless=not args.headed,
+        vision=not args.no_vision,
     )
 
     print(f"Starting discovery run {run.run_id}")

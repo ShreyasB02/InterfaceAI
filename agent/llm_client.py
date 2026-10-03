@@ -37,12 +37,23 @@ list, same as it did for Anthropic), each shim block below carries the
 signature it was issued with, if any, purely so it can be echoed back
 unchanged. It's opaque to us — we never inspect or generate it ourselves,
 only round-trip whatever Gemini sent.
+
+Vision: `decide()` optionally accepts raw screenshot bytes for the CURRENT
+turn. These are attached, via `types.Part.from_bytes(data=..., mime_type=...)`,
+to only the most recent user-role turn in the rebuilt `contents` list —
+confirmed against the `google-genai` README as the correct construction
+for `generate_content` (not the newer Interactions API's dict-based
+`input=[{"type": "image", ...}]` shape, which is a different call
+entirely). Older turns in the resent history are never re-attached with
+their screenshot, deliberately: only the freshest observation needs to be
+seen, and re-sending every prior screenshot on every turn would blow up
+both token cost and context size for no benefit.
 """
 from __future__ import annotations
 
 import os
 import uuid
-from typing import Any
+from typing import Any, Optional
 
 from google import genai
 from google.genai import types
@@ -114,8 +125,9 @@ class LLMClient:
         # FunctionResponse Part (see _to_gemini_contents).
         self._pending_call_names: dict[str, str] = {}
 
-    def decide(self, system_prompt: str, messages: list[dict]):
-        contents = self._to_gemini_contents(messages)
+    def decide(self, system_prompt: str, messages: list[dict],
+               image_bytes: Optional[bytes] = None, image_mime_type: str = "image/png"):
+        contents = self._to_gemini_contents(messages, image_bytes=image_bytes, image_mime_type=image_mime_type)
         response = self.client.models.generate_content(
             model=self.model,
             contents=contents,
@@ -127,8 +139,10 @@ class LLMClient:
         )
         return self._to_shim_response(response)
 
-    def _to_gemini_contents(self, messages: list[dict]) -> list:
+    def _to_gemini_contents(self, messages: list[dict], image_bytes: Optional[bytes] = None,
+                             image_mime_type: str = "image/png") -> list:
         contents = []
+        last_user_content_idx: Optional[int] = None
         for msg in messages:
             role = "model" if msg["role"] == "assistant" else "user"
             content = msg["content"]
@@ -167,6 +181,15 @@ class LLMClient:
 
             if parts:
                 contents.append(types.Content(role=role, parts=parts))
+                if role == "user":
+                    last_user_content_idx = len(contents) - 1
+
+        if image_bytes and last_user_content_idx is not None:
+            # Attach the current screenshot only to the latest user-role
+            # turn (see module docstring on why not every turn).
+            contents[last_user_content_idx].parts.append(
+                types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type)
+            )
         return contents
 
     def _to_shim_response(self, response) -> _Response:

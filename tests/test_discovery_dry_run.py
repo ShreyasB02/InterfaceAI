@@ -1,6 +1,6 @@
 """
 Integration test for the discovery harness that does NOT call the real
-Anthropic API — it substitutes a scripted stub in place of the LLM client
+Gemini API — it substitutes a scripted stub in place of the LLM client
 so the rest of the machinery (browser control, step recording, locator
 inference, artifact assembly, evidence writing) can be verified
 end-to-end without needing an API key. The actual real-model discovery
@@ -48,8 +48,13 @@ class ScriptedLLMClient:
         self.script = list(script)
         self.model = "fake-model-scripted"
         self._i = 0
+        self.saw_image_bytes = False
 
-    def decide(self, system_prompt, messages):
+    def decide(self, system_prompt, messages, image_bytes=None, image_mime_type="image/png"):
+        # Records whether a real screenshot was attached this call, so the
+        # test can assert the vision wiring actually produced bytes rather
+        # than silently passing None every turn (see assertion below).
+        self.saw_image_bytes = self.saw_image_bytes or bool(image_bytes)
         name, tool_input, text = self.script[self._i]
         self._i += 1
         blocks = []
@@ -109,6 +114,8 @@ def main():
     assert (run.evidence_dir / "screenshots").exists()
     n_shots = len(list((run.evidence_dir / "screenshots").glob("*.png")))
     assert n_shots > 0, "expected at least one screenshot"
+    assert run.vision is True, "vision should default to True"
+    assert run.llm.saw_image_bytes, "expected at least one decide() call to receive real screenshot bytes"
 
     print("ALL ASSERTIONS PASSED")
     print(f"steps: {[(s.step_id, s.action) for s in artifact.steps]}")

@@ -22,6 +22,7 @@ from tests.fixtures.example_artifact import (  # noqa: E402
     build_open_sub_account_fixture,
 )
 from replay.executor import ReplayExecutor  # noqa: E402
+from escalation.control_channel import ControlChannel  # noqa: E402
 from escalation.simulated_operator import simulate_operator_takeover  # noqa: E402
 from artifacts.schema import ReplayOutcome  # noqa: E402
 
@@ -120,6 +121,83 @@ def test_escalation_auto_approve_bypass():
     print("PASS: auto-approve bypass ->", result.outcome, result.outputs)
 
 
+def test_manual_takeover_on_non_risky_step():
+    """Tier 2 #7's 'takeover': an operator can pause and grab control on ANY
+    step, not just one the artifact flagged risky — the lookup fixture has
+    no risky/requires_confirmation steps at all, and this still escalates
+    on its very first (NAVIGATE) step because the takeover signal is set
+    before the run even starts. Unlike a risk-triggered escalation, the
+    step itself is NOT skipped after resume — automation executes it
+    itself once control is handed back (see replay/executor.py)."""
+    artifact = build_lookup_member_balance_fixture()
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+    # Constructed against the same run_id/evidence_dir the executor will use
+    # internally — same file, same cross-process coordination the real
+    # operator console and CDP simulator rely on (see control_channel.py).
+    pre_control = ControlChannel(ex.run_id, ex.evidence_dir)
+    pre_control.request_takeover(reason="test: operator wants to look around first")
+
+    def on_escalation(control, ctx):
+        def _resume():
+            control.mark_human_active()
+            control.record_human_action("looked around, nothing needed")
+            control.signal_resume()
+        threading.Thread(target=_resume, daemon=True).start()
+
+    result = ex.run({"member_id": "10001"}, escalation_timeout_s=10, on_escalation=on_escalation)
+    assert result.outcome == ReplayOutcome.SUCCESS, result.model_dump()
+    assert result.escalation is not None, "expected the takeover to be recorded as an escalation"
+    assert result.escalation.step_id == "s1", result.escalation
+    assert result.outputs["member_name"] == "Alice Rivera", result.outputs
+    assert result.steps_executed == 6, "every step should still have run — takeover doesn't skip its step"
+    print("PASS: manual takeover on a non-risky step ->", result.outcome, result.escalation)
+
+
+def test_escalation_cancelled_reports_failure():
+    """Tier 2 #7's 'cancel': unblocks a stuck escalation without waiting
+    for a timeout, and is reported as a controlled FAILURE rather than
+    hanging forever or being silently retried."""
+    artifact = build_open_sub_account_fixture()
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+
+    def on_escalation(control, ctx):
+        threading.Thread(
+            target=lambda: control.cancel(reason="test: operator gave up on this one"),
+            daemon=True,
+        ).start()
+
+    result = ex.run(
+        {"member_id": "10001", "nickname": "Vacation Fund", "initial_deposit": "150"},
+        auto_approve=False, escalation_timeout_s=15, on_escalation=on_escalation,
+    )
+    assert result.outcome == ReplayOutcome.FAILURE, result.model_dump()
+    assert result.failure is not None
+    assert result.failure.step_id == "s9", result.failure
+    assert "cancel" in result.failure.observed.lower(), result.failure
+    print("PASS: escalation cancelled -> reported as FAILURE ->", result.outcome, result.failure)
+
+
+def test_run_interrupted_mid_automation():
+    """Tier 2 #7's 'interrupt': ends the run outright, at any step boundary
+    — not only while an escalation is pending. RunInterrupted is raised as
+    a BaseException (see escalation/transport.py) and is caught explicitly
+    by replay/executor.py's own run(), converting it into a clean
+    ReplayOutcome.INTERRUPTED result rather than propagating out raw or
+    being mistaken for a code failure by a broad except Exception."""
+    artifact = build_lookup_member_balance_fixture()
+    ex = ReplayExecutor(artifact, fresh_evidence_root(), headless=True)
+    pre_control = ControlChannel(ex.run_id, ex.evidence_dir)
+    pre_control.interrupt(reason="test: operator stopped the run")
+
+    result = ex.run({"member_id": "10001"})
+    assert result.outcome == ReplayOutcome.INTERRUPTED, result.model_dump()
+    assert result.interrupted is not None
+    assert result.interrupted.step_id == "s1", result.interrupted
+    assert result.interrupted.reason == "test: operator stopped the run"
+    assert result.steps_executed == 0, "no step should have executed once the interrupt was seen"
+    print("PASS: run interrupted mid-automation ->", result.outcome, result.interrupted)
+
+
 if __name__ == "__main__":
     test_happy_path()
     test_business_outcome_not_found()
@@ -128,4 +206,7 @@ if __name__ == "__main__":
     test_business_outcome_invalid_deposit()
     test_escalation_resolved_by_simulated_operator()
     test_escalation_auto_approve_bypass()
+    test_manual_takeover_on_non_risky_step()
+    test_escalation_cancelled_reports_failure()
+    test_run_interrupted_mid_automation()
     print("\nALL REPLAY SCENARIO TESTS PASSED")
