@@ -13,7 +13,7 @@ reattaches to the exact same live page replay was on, the same mechanism
 escalation/simulated_operator.py uses programmatically for repeatable
 evidence.
 
-Tier 2 #7 adds three controls beyond the original pause/resume pair, all
+Three controls sit alongside the pause/resume pair, all
 driven through the same ControlTransport interface (escalation/transport.py)
 rather than anything console-specific:
   - "Take Over Now", available even while the run shows status=automation
@@ -130,7 +130,7 @@ def resume():
 
 @app.route("/console/takeover", methods=["POST"])
 def takeover():
-    """Tier 2 #7: request a voluntary pause on whatever step the run is
+    """Request a voluntary pause on whatever step the run is
     about to execute next, even though nothing has been flagged risky.
     replay/executor.py polls for this at every step boundary."""
     run_dir = Path(request.form["run_dir"])
@@ -141,7 +141,7 @@ def takeover():
 
 @app.route("/console/cancel", methods=["POST"])
 def cancel():
-    """Tier 2 #7: give up on a pending, stuck escalation right now rather
+    """Give up on a pending, stuck escalation right now rather
     than waiting out a timeout. Only meaningful while an intervention is
     actually pending; the run reports a controlled FAILURE."""
     run_dir = Path(request.form["run_dir"])
@@ -152,7 +152,7 @@ def cancel():
 
 @app.route("/console/interrupt", methods=["POST"])
 def interrupt():
-    """Tier 2 #7: end the run outright, at any point. Delivered to
+    """End the run outright, at any point. Delivered to
     replay/executor.py as RunInterrupted (a BaseException — see
     escalation/transport.py) and reported as ReplayOutcome.INTERRUPTED."""
     run_dir = Path(request.form["run_dir"])

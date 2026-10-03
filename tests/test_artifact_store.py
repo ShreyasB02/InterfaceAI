@@ -3,10 +3,10 @@ Exercises the artifact store and review gate with no browser and no LLM:
 one immutable file per version, numeric version ordering, approved-only
 resolution, and approval being bound to the reviewed content.
 
-Run: python3 tests/test_artifact_store.py
+Run: pytest tests/test_artifact_store.py
 """
+import pytest  # noqa: F401
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -21,6 +21,16 @@ def _draft(version: str):
     artifact = build_lookup_member_balance_fixture()
     artifact.version, artifact.status, artifact.review = version, ArtifactStatus.DRAFT, None
     return artifact
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _temp_store(tmp_path_factory):
+    """These tests build on each other's saved versions, in file order, in
+    a throwaway store — never the repo's real artifacts/store/."""
+    original = repository.STORE_DIR
+    repository.STORE_DIR = tmp_path_factory.mktemp("store")
+    yield
+    repository.STORE_DIR = original
 
 
 def test_versions_are_kept_and_immutable():
@@ -75,10 +85,4 @@ def test_approval_is_bound_to_content():
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmp:
-        repository.STORE_DIR = Path(tmp)
-        test_versions_are_kept_and_immutable()
-        test_latest_is_numeric_not_lexicographic()
-        test_unattended_callers_get_the_approved_version()
-        test_approval_is_bound_to_content()
-    print("\nALL ARTIFACT STORE TESTS PASSED")
+    raise SystemExit(pytest.main([__file__]))

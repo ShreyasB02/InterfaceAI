@@ -1,5 +1,5 @@
 """
-Tier 2 #9 — the control-transport interface that escalation logic depends
+The control-transport interface that escalation logic depends
 on, instead of depending on the concrete file-based implementation
 directly.
 
@@ -37,7 +37,7 @@ specific to the file-based one:
 
   InterventionTimedOut  - no resume signal arrived within an optional
                           deadline. Existing behavior, unchanged.
-  EscalationAbandoned    - Tier 2 #7's "cancel": an operator explicitly
+  EscalationAbandoned    - "cancel": an operator explicitly
                           gave up on a stuck escalation rather than letting
                           it hang forever. Raised out of wait_for_resume()
                           instead of the caller having to poll timeout vs.
@@ -45,7 +45,7 @@ specific to the file-based one:
                           (replay/executor.py) is expected to catch this
                           and turn it into a reported FAILURE outcome —
                           it is not a crash.
-  RunInterrupted         - Tier 2 #7's "interrupt": an operator ended the
+  RunInterrupted         - "interrupt": an operator ended the
                           run outright, at any point, not just while an
                           escalation is pending. Deliberately subclasses
                           BaseException, not Exception. The reason is
@@ -113,7 +113,7 @@ class InterventionKind:
 
 class ControlSignal:
     """The three signal types a transport can carry independently of the
-    pause/resume handshake below (Tier 2 #7). A signal can be set at any
+    pause/resume handshake below. A signal can be set at any
     time, from outside the run, and is polled by the caller at natural
     checkpoints (see replay/executor.py)."""
 
@@ -176,7 +176,7 @@ class ControlTransport(ABC):
     def status(self) -> dict:
         """Current raw state, for the operator console / debugging."""
 
-    # -- Tier 2 #7: distinct exit semantics, settable at any time ---------
+    # -- distinct exit semantics, settable at any time ---------
 
     @abstractmethod
     def request_takeover(self, reason: str = "Operator requested manual control.") -> None:

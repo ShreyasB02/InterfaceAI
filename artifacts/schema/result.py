@@ -36,9 +36,9 @@ structurally distinct rather than collapsing them into a boolean:
                         Carries enough detail (which step, what was
                         expected, what was observed) to debug without
                         re-running.
-  INTERRUPTED          - an operator ended the run outright (Tier 2 #7's
-                        "interrupt", as opposed to "cancel" above, which
-                        only unblocks a stuck escalation). Deliberately
+  INTERRUPTED          - an operator ended the run outright ("interrupt",
+                        as opposed to "cancel" above, which only unblocks
+                        a stuck escalation). Deliberately
                         distinct from FAILURE: nothing went wrong with the
                         automation itself, a human simply chose to stop it,
                         and a caller should treat that the way it would
@@ -69,7 +69,7 @@ class ReplayOutcome(str, Enum):
     BUSINESS_OUTCOME = "business_outcome"
     FAILURE = "failure"
     ESCALATED = "escalated"  # stopped and hand-off to a human is pending/occurred
-    INTERRUPTED = "interrupted"  # an operator ended the run outright (Tier 2 #7)
+    INTERRUPTED = "interrupted"  # an operator ended the run outright
 
 
 class RecoveredStep(BaseModel):

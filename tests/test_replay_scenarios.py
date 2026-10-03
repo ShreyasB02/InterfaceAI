@@ -5,8 +5,9 @@ interstitial, and an escalation that gets resolved by a simulated operator
 reattaching to the live session via CDP. None of this needs an LLM or an
 API key — replay never calls one.
 
-Run: python3 tests/test_replay_scenarios.py
+Run: pytest tests/test_replay_scenarios.py
 """
+import pytest  # noqa: F401
 import shutil
 import sys
 import threading
@@ -136,7 +137,7 @@ def test_escalation_auto_approve_bypass():
 
 
 def test_manual_takeover_on_non_risky_step():
-    """Tier 2 #7's 'takeover': an operator can pause and grab control on ANY
+    """'takeover': an operator can pause and grab control on ANY
     step, not just one the artifact flagged risky — the lookup fixture has
     no risky/requires_confirmation steps at all, and this still escalates
     on its very first (NAVIGATE) step because the takeover signal is set
@@ -168,7 +169,7 @@ def test_manual_takeover_on_non_risky_step():
 
 
 def test_escalation_cancelled_reports_failure():
-    """Tier 2 #7's 'cancel': unblocks a stuck escalation without waiting
+    """'cancel': unblocks a stuck escalation without waiting
     for a timeout, and is reported as a controlled FAILURE rather than
     hanging forever or being silently retried."""
     artifact = build_open_sub_account_fixture()
@@ -192,7 +193,7 @@ def test_escalation_cancelled_reports_failure():
 
 
 def test_run_interrupted_mid_automation():
-    """Tier 2 #7's 'interrupt': ends the run outright, at any step boundary
+    """'interrupt': ends the run outright, at any step boundary
     — not only while an escalation is pending. RunInterrupted is raised as
     a BaseException (see escalation/transport.py) and is caught explicitly
     by replay/executor.py's own run(), converting it into a clean
@@ -387,24 +388,4 @@ def test_edit_after_approval_voids_it():
 
 
 if __name__ == "__main__":
-    test_happy_path()
-    test_business_outcome_not_found()
-    test_recoverable_flaky_session()
-    test_business_outcome_permission_denied()
-    test_business_outcome_invalid_deposit()
-    test_escalation_resolved_by_simulated_operator()
-    test_escalation_auto_approve_bypass()
-    test_manual_takeover_on_non_risky_step()
-    test_escalation_cancelled_reports_failure()
-    test_run_interrupted_mid_automation()
-    test_hard_failure_unresolvable_locator()
-    test_hard_failure_target_app_unreachable()
-    test_missing_declared_output_is_failure()
-    test_locator_fallback_is_reported()
-    test_assert_text_step()
-    test_failure_escalates_and_human_completes_the_step()
-    test_failure_escalation_handed_back_unfixed_is_hard_failure()
-    test_draft_is_refused_unattended_and_runs_attended()
-    test_draft_cannot_auto_approve_irreversible_step()
-    test_edit_after_approval_voids_it()
-    print("\nALL REPLAY SCENARIO TESTS PASSED")
+    raise SystemExit(pytest.main([__file__]))

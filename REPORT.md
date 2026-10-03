@@ -2,369 +2,283 @@
 
 ## 1. Architecture
 
-Four things that don't know about each other's internals, connected by two
-contracts:
-
 ```
-target_app  <--browser-->  agent (discovery)  --artifact-->  artifacts/store
-                                                                    |
-target_app  <--browser-->  replay (executor)  <-------------------+
-                                 |
-                                 v
-                          escalation (control channel, CDP handoff)
+            goal + params                         params
+                 |                                   |
+   target app <- agent/ (discovery, LLM)      replay/ (no LLM) -> target app
+                 |                                   ^
+                 +--> artifacts/ (schema, store, review gate) --+
+                 |                                   |
+                 +---- guardrails/  and  escalation/ +   (shared by both)
 ```
 
-- **`agent/`** only knows how to turn a goal into a recorded trace of
-  actions. It never knows the artifact will be replayed without it.
-- **`replay/`** only knows how to execute a `CapabilityArtifact`. It has
-  never heard of an LLM and can't call one even if it wanted to — there
-  is no model client anywhere in `replay/`.
-- The **artifact** (`artifacts/schema/`) is the only thing that crosses that
-  boundary, and it's a plain, versioned, serializable Pydantic model, not a
-  shared code path. This is the actual point of the exercise: the model
-  discovers, the artifact is the reusable capability, replay is how an AI
-  agent invokes it in production, and those three things should be able to
-  evolve independently.
-- **`guardrails/`** and **`escalation/`** are used by both discovery and
-  replay (allowlist enforcement, redaction, the human-handoff channel) —
-  cross-cutting, not owned by either side.
+Two execution paths that share no code except what sits between them.
+`agent/` turns a goal into a recorded flow. `replay/` executes a recorded
+flow and imports nothing from `agent/`; there is no model client it could
+call. The **artifact** is the only thing that crosses, and it is data, not a
+code path, so the three can evolve separately. `guardrails/` and
+`escalation/` are used by both sides, which is what guarantees a policy
+can't be enforced on one and forgotten on the other.
 
-**Single process, synchronous, flat-file storage.** No queue, no service
-boundary, no database. Artifacts are small JSON documents a human should be
-able to `cat` and review; a directory of them (`artifacts/store/*.json`,
-one immutable file per version, `<name>.v<semver>.json`) gives versioning and diffability for
-free. The brief is explicit that scaling infrastructure isn't the point of
-this exercise and that over-building it is a negative signal — everything
-here is designed so that a queue, a service split, or a real DB could be
-dropped in later without touching the artifact schema or the replay
-contract, but none of it is built preemptively.
+Decisions and their trade-offs:
 
-**Session/auth is bootstrapped outside the artifact.** Both discovery and
-replay log in with a hardcoded operator credential *before* any recorded
-step runs, and login is never part of the recorded trace. A capability
-artifact assumes an authenticated context, the same way a production API
-client attaches auth before calling an endpoint — it's what keeps an
-artifact portable across tenants that might use entirely different login
-flows (see §4).
-
-**Discovery's perception layer is deliberately separate from replay's.**
-`agent/browser_surface.py` enumerates live DOM elements and injects a
-transient `data-cua-idx` attribute so the LLM can act by index *this
-session only* — that attribute is never recorded. What gets recorded is
-`agent/locator_inference.py`'s derivation of ranked, semantic locator
-strategies (CSS-by-name, role+accessible-name, text, XPath-by-label) from
-each element's real attributes. `replay/locator_resolver.py` re-resolves
-those strategies against a fresh page with none of discovery's
-scaffolding. Neither side depends on the other's mechanism — only on the
-`LocatorSpec` in between.
+- **Single process, synchronous, flat files.** Artifacts are small JSON
+  documents a reviewer should be able to read and diff, so the store is a
+  directory. No queue, service split or database: the brief counts that
+  against a submission. The seams where they would go exist (the
+  repository module, `ControlTransport`, the provider router).
+- **Playwright, driven by the harness, not a vendor computer-use SDK.** The
+  model chooses from eight generic tools; the harness performs the action
+  and records it. That keeps recording exact (I record what was done, not
+  what the model said it did) and keeps the model swappable.
+- **Perception is a DOM-derived element list plus a screenshot each turn.**
+  The list makes acting precise and cheap; the screenshot covers what
+  markup doesn't say. This is the choice most tied to the web surface (§4).
+- **Provider-agnostic model access** (`agent/llm/`): Gemini natively, and
+  one adapter for any OpenAI-compatible endpoint, with backoff and ordered
+  failover over one neutral message history. Discovery is the only part
+  with an external dependency, and a single overloaded provider shouldn't
+  be able to stall it.
+- **Login is infrastructure, not a recorded step.** Both paths sign in
+  before anything is observed. An artifact assumes an authenticated
+  session, the way an API client attaches auth before a call, which keeps
+  it portable across tenants with different login flows.
 
 ## 2. Artifact schema
 
-This was the piece I spent the most deliberate design time on, because the
-brief calls it out as the focal point and because a thin schema here would
-have quietly pushed all the hard decisions into replay-engine code where a
-reviewer couldn't see them.
+`CapabilityArtifact` (`artifacts/schema/artifact.py`) is a contract an agent
+can call and a person can review, not a transcript:
 
-A `CapabilityArtifact` (`artifacts/schema/artifact.py`) has:
+- **`input_schema` / `output_schema`**: named, typed, described. Inputs are
+  validated before a browser opens; a run that doesn't produce every
+  declared output, coercible to its type, is a failure, not a success with
+  a gap.
+- **`steps`**: ordered, typed actions. Each has an `intent` (what, in plain
+  language) separate from its `target` (how), so the flow can be read
+  without parsing selectors. Values reference an input by name
+  (`value_param`) instead of being templated into strings.
+- **`target: LocatorSpec`**: a ranked chain of strategies, each with its own
+  written `reasoning`, not one selector. Order of preference: the form
+  field's `name` attribute (the app's own submission contract, so it
+  survives re-skinning), accessible role and name, visible text, and for
+  reading values a label-relative XPath ("the cell in the row labelled
+  Savings") that survives row reordering.
+- **`checkpoint`**: the success condition, asserted, never assumed.
+- **`known_outcomes` / `recoverable_patterns`**: the error taxonomy as
+  declared, versioned data on the artifact, each with a detection locator
+  and the step it follows. A reviewer or calling agent can see which
+  non-success results the capability recognises. The alternative, if/else
+  in the engine, would hide the contract in code.
+- **`risk_level` / `requires_confirmation` per step**, because a capability
+  is usually safe reads followed by one irreversible write; an
+  artifact-level flag would over-block the reads or under-protect the
+  write. **`origin`** records whether the model or a human performed the
+  step during discovery (§5).
+- **`provenance`**: goal, run id, provider, model, a pointer to the
+  evidence, and how many times a human intervened. The transcript itself
+  stays out.
+- **`status` and `review`**: discovery emits a `draft`. The replay engine
+  refuses a draft unattended. Approval records who, when, and a hash of
+  everything replay executes, so editing an approved artifact voids the
+  approval. `base_url` is outside the hash: one reviewed flow is dispatched
+  to many tenants' hosts.
 
-- **`steps`**: ordered, typed actions (`navigate` / `fill` / `click` /
-  `wait_for` / `extract` / `handle_dialog`). Each step's `intent` is a
-  plain-language description of *what*, kept separate from `target` (*how*)
-  — a reviewer can read the capability's behavior without parsing
-  selectors.
-- **`target: LocatorSpec`**: not one selector — a *ranked fallback chain*,
-  each strategy carrying its own `reasoning` string. Replay tries them in
-  order and stops at the first that resolves to exactly one visible
-  element. This is the single biggest lever for surviving the kind of
-  small DOM variation the brief describes (§1's "stable UIs, but no test
-  IDs"), and it's also the seam a per-tenant override slots into (§4).
-- **`input_schema` / `output_schema`**: typed, named, described — what a
-  calling agent must supply and will get back. Dynamic step values
-  reference a param by name (`value_param`) rather than being
-  string-templated, so this typed contract is the single source of truth,
-  not a side effect of how the steps happen to be written.
-- **`checkpoint`**: an explicit, asserted condition (URL pattern / text /
-  element present) that has to be true before a run counts as successful —
-  never "we clicked and assumed it worked."
-- **`known_outcomes` / `recoverable_patterns`**: this is the part I added
-  beyond the minimum. Instead of burying "no such member" or "dismiss this
-  known interstitial" as if/else logic inside the replay engine, they're
-  declared, versioned data on the artifact itself — checked after a named
-  step, with their own detection locator. A human reviewer (or the calling
-  agent) can read the artifact and see exactly which non-success outcomes
-  this capability recognizes and what it does about them, which is
-  precisely the "clear contract, not just a step list" the brief asks for.
-- **`risk_level` / `requires_confirmation`** live on each *step*, not just
-  the artifact, because one capability is usually mostly-safe reads
-  followed by exactly one irreversible write — an artifact-level flag would
-  either over-block the reads or under-protect the write. During
-  discovery, a click that actually triggered a native confirmation dialog
-  is automatically recorded as `irreversible` + `requires_confirmation` —
-  risk classification comes from what happened, not a guess applied after
-  the fact.
-- **`provenance`**: goal, discovery run id, model, timestamp, and a
-  *pointer* to the raw transcript under `/evidence/` — never the transcript
-  itself. The artifact is decoupled from how it was discovered, on purpose.
-- **`status: draft | approved | rejected`** plus a **`review`** record
-  (who, when, notes, and a hash of the content they reviewed). Discovery
-  only ever emits a `draft`. The replay engine itself refuses to run a
-  draft unattended, returning `REFUSED` before a browser opens; a person
-  can run one attended to validate it, and approves it with
-  `python -m artifacts.review approve`. The approval is bound to a sha256
-  over everything replay executes (steps, locators, I/O contract,
-  checkpoint, outcome and recovery rules), so editing an approved artifact
-  voids its approval. `base_url` is deliberately outside the hash: the same
-  reviewed flow is dispatched to different tenants' hosts (§4).
+**Versioning.** One immutable file per semver; the store refuses to
+overwrite. A re-discovery is the next major, an authoring pass the next
+minor, each starting as a draft. An unpinned unattended call resolves to
+the latest *approved* version, never a newer draft.
 
-Every version is its own immutable file (`<name>.v<semver>.json`); the
-store refuses to overwrite one. A re-discovery records the next major
-version, the outcome/recovery authoring pass records the next minor, and
-each new version starts as an unreviewed `draft`. `ls artifacts/store/` is
-the full history, and an unpinned unattended replay resolves to the latest
-*approved* version, never to a newer draft.
+What I'd change: the discovered checkpoint is only a URL pattern (plus the
+output check above). A step-level postcondition on each mutating step would
+catch a click that silently did nothing, earlier.
 
 ## 3. Determinism & error handling
 
-Replay (`replay/executor.py`) never calls a model. Determinism comes from
-three things together: the ranked locator resolution above, an explicit
-checkpoint assertion at the end, and — the part I think matters most —
-keeping the three outcome classes structurally distinct rather than
-collapsing them into a boolean:
+**Determinism.** No model call. Each step resolves its locator chain in
+order and takes the first strategy matching *exactly one* visible element;
+an ambiguous match counts as a miss, because acting on "one of several" is
+the blind proceeding the brief warns about. Every wait is bounded. The run
+ends by asserting the checkpoint and the outputs.
 
-- **`SUCCESS`** — checkpoint verified, typed `outputs` populated.
-- **`BUSINESS_OUTCOME`** — a `known_outcomes` marker matched. Data the
-  caller needs ("no such member," "action not permitted"), not a failure.
-  I chose to classify a validation rejection (deposit below minimum) as a
-  business outcome too, not a failure — it's a deterministic, well-
-  understood response to specific caller input, not a sign anything broke.
-  A different reasonable design would force the caller to pre-validate and
-  treat it as a failure; I preferred surfacing it as structured data
-  because it's directly actionable by an agent that can just ask for a
-  corrected amount.
-- **`FAILURE`** — a locator never resolved, a recoverable pattern exhausted
-  its retry budget, the checkpoint didn't hold after all steps ran, or an
-  allowlist violation. Always carries `step_id` / `expected` / `observed`
-  from the actual attempt, not a generic exception string.
+**The result contract** is an enum the caller switches on, never a message
+to parse:
 
-**Recoverable conditions never reach the caller as a fourth case.** A
-`recoverable_pattern` (e.g. the seeded one-time session-expired
-interstitial) is detected with a short probe (~400ms — this matters:
-checking for an error condition after *every* step with a multi-second
-timeout would make the happy path slow) and handled via one of three
-recovery actions declared on the pattern: `reload_and_retry` (re-request
-the current page — right for a transient bad response), `retry_step`
-(re-run the step that produced this state — right for a flaky click),
-or `dismiss_and_continue` (the condition doesn't actually block
-progress). What replay did about it is logged into `recovered_steps` on
-the result, so a "successful" run's evidence still shows it wasn't
-perfectly smooth.
+| Outcome | Meaning | Caller should |
+|---|---|---|
+| `success` | checkpoint held, all outputs returned | use the outputs |
+| `business_outcome` | a declared outcome matched ("no such member") | treat as an answer |
+| `failure` | couldn't complete; carries step, expected, observed | investigate |
+| `input_error` | params don't satisfy the schema; no browser opened | fix the call |
+| `refused` | artifact not approved for this kind of run | get it reviewed |
+| `escalated` | waiting on a human who didn't respond in time | follow up |
+| `interrupted` | an operator stopped the run | not retry blindly |
 
-**Known-outcome and recoverable-pattern checks are artifact data, checked
-against `after_step`** — so the same declared contract that a reviewer
-reads is exactly what replay evaluates; there's no second, hidden copy of
-this logic in code.
+**Runtime conditions.** After each step the page is probed (a short
+timeout, so the happy path isn't slowed) against the artifact's rules:
+
+- *Business outcome*: stop and return its code. Not logged as an error. I
+  class a validation rejection (deposit below minimum) here too: it is a
+  deterministic answer to the caller's input.
+- *Recoverable*: apply the declared action (`reload_and_retry`,
+  `retry_step`, `dismiss_and_continue`) within a retry budget, then carry
+  on. It never becomes a result class; it is listed in `recovered_steps`
+  so a "successful" run still shows it wasn't smooth.
+- *Hard failure*: anything else. A locator that never resolved, a timeout,
+  a failed load, the app being down, an exhausted retry budget, a policy
+  violation. Returned as `failure` with the step, what was expected, what
+  was observed, a screenshot and a redacted DOM snapshot. No exception
+  reaches the caller as a traceback.
+
+Recoverable conditions that only a person can clear go to §5.
+
+**Drift**, secondary per the brief: each step logs which strategy index
+resolved, and `locator_fallbacks` reports steps that fell past their
+primary. A tenant that starts reporting fallbacks is degrading before it
+breaks.
+
+**Limit.** A successful run never sees "no such member", so known outcomes
+and recoverable patterns come from a separate authoring pass
+(`agent/augment_artifact.py`), not from discovery.
 
 ## 4. Heterogeneity & multi-tenant
 
-Not built — this is the design-only part the brief asks for.
+Design only, as the brief asks.
 
-**Surface abstraction.** The seam is exactly the discovery/replay split in
-§1: `LocatorSpec` and `Step` don't know anything about Playwright. A
-desktop surface would implement the same `observe()`/act contract against
-the OS accessibility tree instead of the DOM (Windows UIA / macOS AX APIs,
-which Playwright-equivalent tools like `pywinauto` or `atomac` expose) and
-add `LocatorMethod.AX_PATH` alongside `css`/`role`/`text`/`xpath`. A legacy
-web app with framesets needs frame-aware resolution in
-`locator_resolver.py`, not a schema change. Everything above the browser
-surface — the artifact, the replay executor's control flow, the outcome
-taxonomy — is already surface-agnostic; I bottlenecked all surface-specific
-code into `agent/browser_surface.py` and `replay/locator_resolver.py`
-deliberately so this swap is contained to those two files.
+**Surface abstraction.** The seam is the artifact vocabulary. A `Step` says
+"click the control identified by this ranked spec" and names no browser
+API. Moving to another surface means a new perceive/act implementation
+(today `agent/browser_surface.py` and `replay/locator_resolver.py`) and new
+locator methods, not a new schema or a new executor loop:
 
-**Multi-tenant reuse.** `TargetSurface.vendor_product` identifies the
-underlying vendor product an artifact was recorded against, independent of
-`base_url` — the idea being an artifact is looked up by
-`(vendor_product, capability_name)` and dispatched against whichever
-tenant's `base_url` is calling, not re-recorded per tenant. Two tenants on
-the same vendor product with a re-skinned theme mostly don't break anything
-here, *because* locator strategies prefer name attributes and accessible
-role+name over anything visual. Where a tenant genuinely differs (a
-relabeled field, an extra required column), the fix is a **per-tenant
-override layer**: a small artifact patch keyed by tenant id that
-adds/replaces specific `LocatorStrategy` entries or `known_outcomes`
-markers without touching step semantics — the ranked-list structure of
-`LocatorSpec` was designed with exactly this insertion point in mind, I
-just didn't build the override-resolution code itself.
+- *Legacy web with framesets*: frame-aware resolution in the resolver, and
+  a `frame` field on the locator strategy.
+- *Desktop*: the same contract over the OS accessibility tree (UIA / AX),
+  with `role`+name carrying over unchanged, plus a last-resort
+  `screenshot_region` method (bounding box and OCR anchor).
 
-**Drift detection.** The signal is in the result contract: every step logs
-which strategy index in its `LocatorSpec` resolved, and
-`ReplayResult.locator_fallbacks` lists each step that had to fall back past
-its primary strategy. A tenant whose index-0 strategy stops resolving and
-keeps falling back to index 2 is showing drift *before* it becomes an
-outright failure. What isn't built is the aggregation: trending that field
-per tenant and flagging the artifact for re-review.
+Honest gap: the executor still calls Playwright directly for navigation,
+dialogs and reload. Those dozen calls need to move behind a `Surface`
+interface before a second surface is real. And discovery's perception leans
+on the DOM; a surface with no usable markup needs the accessibility tree or
+coordinates as the primary path.
+
+**Multi-tenant reuse.** An artifact is recorded once against a vendor
+product (`target.vendor_product`), looked up by `(vendor_product, name)`,
+and dispatched to the calling tenant's `base_url`. The approval hash
+excludes `base_url` for this reason. A re-skinned tenant mostly doesn't
+break it, because locators prefer field names and accessible names over
+anything visual.
+
+Where a tenant truly differs (a relabelled field, an extra confirmation), a
+thin **override** keyed by `(vendor_product, tenant_id, base_version)`
+declares only the differing locator strategies, steps or outcome rules, and
+is merged onto the approved base at load. It is reviewed like any artifact.
+The ranked `LocatorSpec` is the insertion point: an override usually just
+prepends a strategy.
+
+**Drift per tenant and version**: aggregate `locator_fallbacks` and failure
+rates by `(tenant, artifact version)`. Rising fallbacks flag that tenant's
+override for re-review without disturbing the others; a new vendor version
+gets a new base recording, with the old one kept for tenants still on it.
 
 ## 5. Escalation & handoff
 
-**Four ways a run reaches a human**, all through one mechanism:
+**Four ways a run reaches a human**, through one mechanism:
 
 | Trigger | Where | Detected by |
 |---|---|---|
-| The model can't safely proceed (a decision it isn't authorised to make, a control it can't find) | discovery | the model calls `request_human(reason)` |
-| The model is stuck without saying so | discovery | the harness: the same tool call 3 times running, or 3 failed calls in a row |
-| A step needs a person: an irreversible click, or a value only a human supplied | replay | the artifact (`requires_confirmation`), unless the approved artifact is run with `--auto-approve` (refused for a draft, §2) |
-| A step failed and replay can't recover | replay | opt-in, `--escalate-on-failure`. Off by default: an unattended production call should return `FAILURE` promptly, not block on a person |
+| The model can't safely proceed | discovery | the model calls `request_human` |
+| The model is stuck without saying so | discovery | the harness: the same call 3 times running, or 3 failed calls in a row |
+| A step needs a person: an irreversible action, or a value only a human supplied | both | the model's declaration in discovery; the artifact's flag in replay |
+| A step failed and can't recover | replay | opt-in `--escalate-on-failure`; off by default so an unattended call fails promptly |
 
-An operator can also take the wheel uninvited (`takeover`), give up on a
-pending request (`cancel`), or stop the run (`interrupt`), at any step or
-turn boundary. `finish_stuck` stays terminal: "no such member" is a dead
-end a human can't fix either, so it doesn't page one.
+An operator can also take over uninvited, cancel a pending request, or stop
+the run, at any step boundary. A dead end no human could fix ("no such
+member") does not page one.
 
-**The intervention request** carries what the operator needs to act:
-capability, goal, the step or turn, why it stopped, the current URL, a
-screenshot, and the CDP endpoint to attach to.
+**The request** carries capability, goal, step, reason, current URL, a
+screenshot, and the endpoint to attach to.
 
-**Control transfer.** Both discovery and replay launch Chromium with a
-remote-debugging port open from the start, so the session a human attaches
-to is the one automation was driving, not a fresh one. The run writes the
-request to the `ControlTransport` and from that moment until
-`wait_for_resume()` returns, the human owns the session: automation makes
-no page call, it only idles. Who is in control is one field
-(`status`: `automation` / `paused_for_human` / `human_active` /
-`resume_requested`) that both sides and the console read. The operator,
-or `escalation/simulated_operator.py` for repeatable evidence, attaches
-with `connect_over_cdp` from a separate process and drives the same page.
+**Control transfer.** Both paths launch the browser with a debugging port
+open, so the session a human attaches to is the one automation was driving.
+From the request until `wait_for_resume()` returns, the human owns the
+session and automation makes no page call. Ownership is one field on the
+`ControlTransport` (`automation` / `paused_for_human` / `human_active` /
+`resume_requested`) that both sides read. The operator attaches from a
+separate process over CDP.
 
 **What the human did is observed, not self-reported**
-(`escalation/recorder.py`). A script injected into every document reports
-the operator's clicks and field edits through a Playwright binding;
-navigations and dialogs come from page events. Recording is on only while
-the human holds control. In replay the observed actions go into the result
-(`escalation.human_actions`) and the log. In discovery they also become
-artifact steps marked `origin: "human"`, with the same locator inference
-the model's actions get, so a flow that needed a person is still recorded
-end to end and replays. A value the human typed is bound to an input param
-if it matches one; otherwise it is never written down, and that step is
-flagged so replay hands it to a human rather than inventing a value.
+(`escalation/recorder.py`): a listener in the page reports their clicks and
+field edits; navigations and dialogs come from page events. In replay this
+lands in the result. In discovery it also becomes artifact steps marked
+`origin: "human"`, so a flow that needed a person still records end to end
+and replays. A value they typed is bound to an input if it matches one;
+otherwise it is never written down and that step is handed to a human at
+replay.
 
-**Handing back.** The operator says what happened to the paused step:
-"I completed it" (automation continues from the next step) or "run it
-yourself" (automation executes it). Unstated, the default follows the
-kind of request. Either way the run then verifies the checkpoint and the
-declared outputs like any other; it doesn't trust that the handoff worked.
-A failed step is escalated once: if it still fails after the handoff, that
-is a hard failure.
+**Handing back.** The operator states whether they completed the paused
+step or want automation to run it. The run then verifies the checkpoint as
+usual. A failed step is escalated once.
 
-**What's mocked:** the operator console is a bare Flask page, and a real
-person drives the page through `chrome://inspect` (or the headed window)
-rather than an embedded live view, which the brief scopes out. The scripted
-operator stands in for a person's decisions only. **Limits:** the recorder
-sees clicks and field changes, not free keyboard navigation or drag
-gestures; the file-backed transport assumes the operator's console shares
-a filesystem with the run (an HTTP transport is one new `ControlTransport`
-subclass); one fixed CDP port per run means one escalatable run per host
-at a time.
+**Mocked:** the console is a bare page, and a person drives the browser
+through the headed window or `chrome://inspect`, not an embedded view. A
+scripted operator stands in for a person's decisions in the evidence; the
+attach, transfer, observation and resume are the real mechanism.
+**Limits:** the recorder misses keyboard-only navigation; the transport is
+file-backed, so console and run share a filesystem; one debugging port per
+run.
 
 ## 6. Safety
 
-One policy object (`guardrails/allowlist.py`), built from config and used
-identically by discovery and replay, with four independent axes: permitted
-**domains**, permitted **routes** (path globs), permitted **action types**,
-and **risky routes** (where a state-changing request counts as
-irreversible). An empty or unparseable input blocks; nothing fails open.
+**Policy** (`guardrails/allowlist.py`) has four configurable axes: allowed
+domains, allowed routes, allowed action types, and risky routes. Empty or
+unparseable input blocks.
 
-**Enforced before the fact, not after.** Three points, earliest first:
+**Enforced before the fact.** Action type and navigation target are checked
+before acting. A click's destination can't be known in advance, so every
+request the session makes is hooked (`guardrails/network.py`) and one that
+leaves the allowlist is aborted before it is sent; the test clicks "Log
+Off" under a policy without `/logout` and shows the session still signed
+in. The landed URL is checked afterwards to cover redirects.
 
-1. *Before an action*: its type, and for a navigation its destination.
-2. *On the wire* (`guardrails/network.py`): a click's destination can't be
-   known in advance, and checking the URL afterwards means the request has
-   already reached the server. Every request the session makes is hooked,
-   and one that leaves the allowlist is aborted before it is sent. The test
-   for this clicks "Log Off" under a policy that doesn't permit `/logout`
-   and shows the session is still signed in afterwards.
-3. *After an action*, on the URL the page landed on, because the request
-   hook isn't called for redirect hops.
+**Risky actions require a human**, not a block (the capability exists to do
+them) and not a flag afterwards (too late). Two signals classify one: the
+app raised a confirmation dialog, or the action made a non-GET request to a
+risky route. In discovery a declared irreversible click waits for approval,
+and an undeclared one is stopped on the wire. In replay a flagged step
+escalates, or runs under `--auto-approve` only if the artifact is approved;
+an unflagged step is held to safe requests whatever the artifact claims.
 
-**Risky and irreversible actions are handled by requiring a human**, not by
-blocking outright (the capability exists to do them) and not by flagging
-after the fact (too late for "irreversible"). Classification has two
-independent signals: the app raised a native confirmation dialog, or the
-action made a non-GET request to a risky route. Then:
+**Data.** Logs are redacted whole and recursively: sensitive key names,
+value shapes (SSN, card, account number, amount), and values the run itself
+read off a record. Artifact text written by the model is generalized to
+placeholders before saving. Sensitive-shaped values are tokenized before
+they reach the model and restored only at the browser. Credentials come
+from one seam and never enter an artifact, log, or prompt. A capability's
+declared outputs are deliberately returned unredacted: they are the
+deliverable.
 
-- *Discovery*: a click the model declares irreversible pauses for a
-  human's approval first (§5). One it didn't declare can't slip through:
-  an unplanned dialog is dismissed, and a risky request is aborted on the
-  wire. `--allow-irreversible` turns the gate off for a sandbox target.
-- *Replay*: a flagged step escalates, or runs under `--auto-approve` when
-  the artifact is approved (§2). A step *not* flagged is held to safe
-  requests regardless of what the artifact says, so an under-classified
-  artifact still can't commit a risky request.
-- While a human holds the session they may act on risk, but the allowlist
-  still binds the session they are driving.
-
-**Data handling.** Two mechanisms, for two different boundaries:
-
-- *What is written to disk* (`guardrails/redaction.py`). Every log event
-  is redacted whole, at every depth: sensitive key names, and value shapes
-  (SSN, card, this app's account-number format, dollar amounts). Values
-  the run itself extracted from a record, such as a member's name, have no
-  shape to match, so they are scrubbed by provenance instead. Failure DOM
-  snapshots go through the same redaction.
-- *What reaches the model* (`guardrails/tokenizer.py`): sensitive-shaped
-  values in params and page text are swapped for placeholders before the
-  prompt is built and swapped back only at the moment of a browser action.
-- *Artifacts*: the description and checkpoint text a model writes quote
-  the record it was looking at. They are generalized before saving (param
-  values and extracted outputs become `{placeholders}`, shapes are
-  redacted). A typed value that is neither a declared input nor plainly
-  innocuous is not stored; that step is handed to a human at replay.
-- *Credentials*: the operator login comes from one seam
-  (`guardrails/credentials.py`), is driven outside the tool surface, and
-  never enters an artifact, a log, or the model's context.
-- *Deliberately not redacted*: a capability's own declared outputs in the
-  result it returns (that is the deliverable), and ordinary identifiers
-  such as a member ID, which the app and the brief both use openly.
-
-**Limits.** Redaction is pattern- and provenance-based, not a PII
-classifier: a novel format in free text can get through. Screenshots are
-not pixel-redacted; the ones in `/evidence/` show only this mock app's
-fabricated data, but a real account screen would need field-level masking
-first. The policy is coarse (domain, route, action type, verb) and knows
-nothing of business meaning: it can't say "transfers under $100 are fine".
-Risky routes are configured, not learned. Route checks apply to documents
-and XHR, not to static assets.
+**Limits.** Redaction is by pattern and provenance, not a PII classifier.
+Screenshots are not pixel-masked (those in `/evidence/` show only fabricated
+data). The policy knows routes and verbs, not business meaning.
 
 ## 7. Cuts
 
-Deliberately not built, and why:
+- **Multi-tenant dispatch and overrides**: designed (§4), not built.
+  Proving it needed a fabricated second tenant; the time went to the replay
+  contract and the handoff.
+- **A second surface**, and the `Surface` interface extraction it needs.
+- **A real operator console**: out of scope per the brief; a bare page over
+  the real mechanism.
+- **Discovered error handling**: known outcomes come from an authoring
+  pass written per capability. Next step: a declarative profile per vendor
+  app, applied to every artifact recorded on it.
+- **Step-level postconditions** and a richer discovered checkpoint (§2).
+- **Drift aggregation**: the per-run signal exists, the trend doesn't.
+- **Scale infrastructure**: queueing, a database, a networked control
+  transport, a port per concurrent run.
+- **Stretch goals**: the approval gate is built. Code generation,
+  stability scoring and LLM-assisted single-step recovery are not.
 
-- **Multi-tenant dispatch and per-tenant overrides**: designed (§4), not
-  implemented. Proving it would have meant fabricating a second tenant;
-  the effort went into the replay contract and the handoff instead.
-- **A real operator console**: explicitly out of scope per the brief. A
-  bare Flask page stands in, over the real control-transfer mechanism. The
-  operator drives the page through `chrome://inspect` or the headed
-  window, not an embedded live view.
-- **Desktop and framed legacy-web surfaces**: one browser surface only.
-  The seam is described in §4; perception is DOM-derived plus a
-  screenshot, not yet an accessibility-tree or coordinate path.
-- **Known outcomes are authored, not discovered**: a successful run never
-  sees "no such member", so `known_outcomes` and `recoverable_patterns`
-  come from a second authoring pass (`agent/augment_artifact.py`) written
-  per capability. A declarative per-vendor-app profile is the next step.
-- **Drift aggregation**: the per-run signal exists
-  (`locator_fallbacks`); trending it per tenant and triggering re-review
-  does not.
-- **Scale infrastructure**: single process, flat files, a file-backed
-  control channel, one CDP port per run. Each sits behind an interface
-  (`ControlTransport`, the repository module, the provider router) rather
-  than being built out.
-- **Pixel redaction of screenshots** and a real PII classifier (§6).
-- **Stretch goals**: the approval gate and reviewer workflow are built
-  (§2). Code generation, multi-run stability scoring, and LLM-assisted
-  single-step recovery are not.
-
-With more time, in order: per-tenant override resolution (highest leverage
-against hundreds of tenants on the same vendor app), a declarative
-known-outcome profile per vendor app, then an accessibility-tree
-perception path to make the "no clean DOM" story concrete.
+Next, in order: tenant overrides, the per-vendor outcome profile, then an
+accessibility-tree perception path to make "no clean DOM" concrete.

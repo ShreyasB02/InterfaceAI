@@ -6,8 +6,9 @@ redaction of logs and artifact text.
 The first group needs nothing running. The second drives the replay engine
 against the target app (python target_app/app.py). No LLM, no API key.
 
-Run: python3 tests/test_guardrails.py
+Run: pytest tests/test_guardrails.py
 """
+import pytest  # noqa: F401
 import json
 import os
 import shutil
@@ -193,13 +194,4 @@ def test_under_classified_step_cannot_commit_a_risky_request():
 
 
 if __name__ == "__main__":
-    test_policy_axes()
-    test_policy_fails_closed()
-    test_log_redaction_is_recursive()
-    test_artifact_text_is_generalized()
-    test_route_policy_does_not_break_a_legitimate_run()
-    test_click_to_forbidden_route_is_aborted_on_the_wire()
-    test_action_type_policy()
-    test_navigation_is_checked_before_leaving()
-    test_under_classified_step_cannot_commit_a_risky_request()
-    print("\nALL GUARDRAIL TESTS PASSED")
+    raise SystemExit(pytest.main([__file__]))

@@ -14,6 +14,7 @@ of those actions into artifact steps, and the resume.
 
 No API key needed. Run: python3 tests/test_discovery_handoff.py
 """
+import pytest  # noqa: F401
 import json
 import os
 import re
@@ -93,6 +94,12 @@ def _operator(actions, on_risk_confirmation="approve"):
 
 def _log_events(run) -> list[dict]:
     return [json.loads(line) for line in (run.evidence_dir / "log.jsonl").read_text().splitlines()]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _clean_evidence():
+    if EVIDENCE_ROOT.exists():
+        shutil.rmtree(EVIDENCE_ROOT)
 
 
 def test_model_requests_human_for_a_decision():
@@ -186,8 +193,4 @@ def test_harness_detects_stuck_and_human_steps_replay():
 
 
 if __name__ == "__main__":
-    if EVIDENCE_ROOT.exists():
-        shutil.rmtree(EVIDENCE_ROOT)
-    test_model_requests_human_for_a_decision()
-    test_harness_detects_stuck_and_human_steps_replay()
-    print("\nALL DISCOVERY HANDOFF TESTS PASSED")
+    raise SystemExit(pytest.main([__file__]))

@@ -17,7 +17,7 @@ Examples:
         --param member_id=10001 --param nickname="Vacation Fund" --param initial_deposit=100 \\
         --simulate-operator "Confirm & Open Account"
 
-Tier 2 #7's other two exit paths can be demoed the same way, without a
+The other exit paths can be demoed the same way, without a
 physically present operator:
 
     # cancel a stuck escalation instead of resolving it -> reported as FAILURE
@@ -89,19 +89,19 @@ def main():
                          help="With --simulate-operator: the operator hands the paused step back for "
                               "automation to run, instead of having performed it themselves.")
     parser.add_argument("--simulate-cancel-after", type=float, default=None, metavar="SECONDS",
-                         help="Tier 2 #7's 'cancel': once an escalation is hit, wait this many "
+                         help="'cancel': once an escalation is hit, wait this many "
                               "seconds and then cancel it instead of resolving it — the run reports "
                               "a FAILURE rather than hanging or timing out. Mutually exclusive with "
                               "--simulate-operator / --simulate-takeover-after (only one on-escalation "
                               "behavior can be simulated per run).")
     parser.add_argument("--simulate-takeover-after", type=float, default=None, metavar="SECONDS",
-                         help="Tier 2 #7's 'takeover': wait this many seconds from run start, then "
+                         help="'takeover': wait this many seconds from run start, then "
                               "request manual control on whatever step runs next — even one never "
                               "flagged risky — then auto-resume shortly after, proving automation "
                               "picks the same step back up rather than skipping it. Mutually "
                               "exclusive with --simulate-operator / --simulate-cancel-after.")
     parser.add_argument("--simulate-interrupt-after", type=float, default=None, metavar="SECONDS",
-                         help="Tier 2 #7's 'interrupt': wait this many seconds from run start, then "
+                         help="'interrupt': wait this many seconds from run start, then "
                               "end the run outright, whether or not an escalation is pending. "
                               "Can be combined with any of the other --simulate-* flags.")
     parser.add_argument("--escalation-timeout", type=float, default=None,

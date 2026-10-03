@@ -232,7 +232,7 @@ class DiscoveryRun:
         self.llm = llm or LLMClient.from_env()
         if hasattr(self.llm, "on_event"):
             self.llm.on_event = self._log
-        # One tokenizer per run (Tier 2 #6) — see guardrails/tokenizer.py.
+        # One tokenizer per run — see guardrails/tokenizer.py.
         # Its token map is purely in-memory and is discarded with this
         # object; nothing about it is ever written to evidence.
         self.tokenizer = Tokenizer()

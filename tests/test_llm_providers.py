@@ -7,9 +7,11 @@ Covers: neutral-history -> wire-format translation (tool calls, tool results,
 screenshot placement), response parsing, error classification, retry with
 backoff, sticky failover, and the all-providers-failed case.
 
-Run: python3 tests/test_llm_providers.py
+Run: pytest tests/test_llm_providers.py
 """
+import pytest  # noqa: F401
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -178,7 +180,14 @@ def test_all_providers_failed():
     print("PASS: every provider failing raises one error naming each cause")
 
 
-def test_from_env(monkey_env):
+def test_from_env(monkeypatch):
+    def monkey_env(values):
+        for key in list(os.environ):
+            if key.startswith(("LLM_", "GEMINI_", "GOOGLE_API", "OPENROUTER_", "OPENAI_", "GROQ_")):
+                monkeypatch.delenv(key)
+        for key, value in values.items():
+            monkeypatch.setenv(key, value)
+
     monkey_env({"LLM_PROVIDERS": "openrouter", "OPENROUTER_API_KEY": "k", "OPENROUTER_MODEL": "vendor/model"})
     client = LLMClient.from_env()
     assert client.describe() == "openrouter:vendor/model", client.describe()
@@ -221,23 +230,5 @@ def test_gemini_history_after_failover():
     print("PASS: Gemini replays its own tool calls natively and another provider's as text")
 
 
-def _monkey_env(values):
-    import os
-    for key in list(os.environ):
-        if key.startswith(("LLM_", "GEMINI_", "GOOGLE_API", "OPENROUTER_", "OPENAI_", "GROQ_")):
-            del os.environ[key]
-    os.environ.update(values)
-
-
 if __name__ == "__main__":
-    test_history_translates_to_openai_messages()
-    test_openai_compat_round_trip()
-    test_openai_compat_error_classification()
-    test_malformed_tool_arguments_become_text()
-    test_retry_then_success()
-    test_failover_is_sticky()
-    test_non_retryable_fails_over_immediately()
-    test_all_providers_failed()
-    test_gemini_history_after_failover()
-    test_from_env(_monkey_env)
-    print("\nALL LLM PROVIDER TESTS PASSED")
+    raise SystemExit(pytest.main([__file__]))

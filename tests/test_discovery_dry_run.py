@@ -7,8 +7,9 @@ end-to-end without needing an API key. The actual real-model discovery
 run used for the graded evidence is separate (see /evidence/discovery/)
 and is what satisfies "the discovery run has to be real".
 
-Run: python3 tests/test_discovery_dry_run.py
+Run: pytest tests/test_discovery_dry_run.py
 """
+import pytest  # noqa: F401
 import os
 import shutil
 import sys
@@ -71,7 +72,7 @@ SCRIPT = [
 ]
 
 
-def main():
+def test_discovery_records_a_replayable_artifact():
     evidence_root = Path("/tmp/cua_dry_run_evidence")
     if evidence_root.exists():
         shutil.rmtree(evidence_root)
@@ -118,4 +119,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(pytest.main([__file__]))

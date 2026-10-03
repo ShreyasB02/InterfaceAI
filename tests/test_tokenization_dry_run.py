@@ -1,5 +1,5 @@
 """
-Integration test for Tier 2 #6 (two-way tokenization) — verifies the whole
+Integration test for two-way tokenization — verifies the whole
 round trip through the real discovery harness, not just the Tokenizer
 class in isolation: a value is tokenized before it ever reaches the
 model's context, the model (scripted here, same technique as
@@ -10,8 +10,9 @@ at the one boundary where it drives an actual browser action.
 No real LLM/API key is used — same ScriptedLLMClient substitution as
 test_discovery_dry_run.py.
 
-Run: python3 tests/test_tokenization_dry_run.py
+Run: pytest tests/test_tokenization_dry_run.py
 """
+import pytest  # noqa: F401
 import os
 import shutil
 import sys
@@ -54,7 +55,7 @@ class ScriptedLLMClient:
         return FakeResponse(blocks)
 
 
-def main():
+def test_tokenize_detokenize_round_trip():
     evidence_root = Path("/tmp/cua_tokenizer_dry_run_evidence")
     if evidence_root.exists():
         shutil.rmtree(evidence_root)
@@ -138,4 +139,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(pytest.main([__file__]))

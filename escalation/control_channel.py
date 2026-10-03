@@ -1,5 +1,5 @@
 """
-The concrete, file-based ControlTransport implementation (Tier 2 #9 — see
+The concrete, file-based ControlTransport implementation (see
 escalation/transport.py for the interface and why it's split out). Backed
 by a JSON file rather than an in-process object deliberately: the operator
 console (escalation/operator_console.py) and the CDP-reattachment simulator
@@ -17,7 +17,7 @@ State machine (single writer at a time, statuses are the contract):
   resume_requested       -> the operator signaled they're done; replay may
                           proceed
 
-Independent of `status` above, a `signal` field (Tier 2 #7) can be set at
+Independent of `status` above, a `signal` field can be set at
 any time by an operator to ask for one of three things without waiting for
 `status` to reach a particular value first:
   takeover requested   -> operator wants to pause and take control right
@@ -72,7 +72,7 @@ class ControlChannel(ControlTransport):
         # Write-then-atomic-rename rather than an in-place write_text(): two
         # separate processes/threads poll and write this same file (the
         # operator console or CDP simulator vs. the replay run's own
-        # wait_for_resume loop), and Tier 2 #7 added more of that traffic
+        # wait_for_resume loop), and signal polling adds more of that traffic
         # (pending_signal() is now polled every step, not just while
         # already escalated). An in-place write is not atomic — a reader
         # can observe a truncated/partial file mid-write and fail to parse
@@ -170,7 +170,7 @@ class ControlChannel(ControlTransport):
     def status(self) -> dict:
         return self._read()
 
-    # -- Tier 2 #7: takeover / cancel / interrupt --------------------------
+    # -- takeover / cancel / interrupt --------------------------
 
     def request_takeover(self, reason: str = "Operator requested manual control.") -> None:
         state = self._read()

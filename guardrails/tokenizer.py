@@ -1,5 +1,5 @@
 """
-Two-way tokenization for LLM-facing text (Tier 2 #6) — deliberately a
+Two-way tokenization for LLM-facing text — deliberately a
 separate mechanism from guardrails/redaction.py's one-way log/evidence
 redaction, because the two solve different problems:
 

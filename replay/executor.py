@@ -424,7 +424,7 @@ class ReplayExecutor:
                     step = steps[i]
                     current_step_id = step.step_id
 
-                    # Tier 2 #7: an interrupt can land at any step boundary,
+                    # An interrupt can land at any step boundary,
                     # not just while an escalation is already pending — check
                     # it before anything else this iteration does. Raised as
                     # RunInterrupted (a BaseException, not Exception — see
@@ -596,7 +596,7 @@ class ReplayExecutor:
                             event="outputs_incomplete")
 
             except RunInterrupted as e:
-                # Tier 2 #7's "interrupt". Caught explicitly, right here —
+                # "interrupt". Caught explicitly, right here —
                 # this is the one place that owns turning "an operator
                 # stopped this" into a clean, typed result. Everywhere else
                 # in this codebase that has a broad `except Exception`
