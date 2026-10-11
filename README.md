@@ -44,11 +44,17 @@ cp .env.example .env
 Replay and the test suite need no API key. Discovery needs one LLM provider
 key in `.env`.
 
-Start the target app and leave it running (`http://127.0.0.1:5055`):
+Start the target app in its own terminal and leave it running
+(`http://127.0.0.1:5055`):
 
 ```bash
 python target_app/app.py
 ```
+
+Every discovery, replay and `capabilities invoke` command below drives a
+real browser against it, so it must be up first. Without it a replay does
+not crash: it returns `failure` at `session_bootstrap` with a
+connection-refused message. Only `pytest` starts the app for itself.
 
 Seeded members: `10001` and `10002` are normal, `10003` is
 permission-restricted, `10004` shows a one-time session-expired
