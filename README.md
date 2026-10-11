@@ -73,6 +73,10 @@ model must support tool calling; pass `--no-vision` if it can't take images.
 
 ## Demo path
 
+The repo ships with approved artifacts in `artifacts/store/`, so step 4 and
+every command after it work without an API key. Steps 1–3 show how those
+artifacts are produced; running them records a new version alongside.
+
 ```bash
 # 1. Discovery: a real LLM-driven run that records a capability artifact
 python -m agent.run_discovery \
@@ -105,7 +109,7 @@ Replay with other inputs to see each outcome class:
 | `--param member_id=99999` | `business_outcome`: `member_not_found` |
 | `--param member_id=10004` | `success`, with the session-expired recovery listed in `recovered_steps` |
 | target app stopped | `failure` at `session_bootstrap`, with a screenshot and DOM snapshot |
-| before step 3 (still a draft) | `refused`; add `--attended` to validate a draft by hand |
+| `--version 1.0.0` (the unreviewed draft) | `refused` before a browser opens; add `--attended` to validate a draft by hand |
 
 Every run writes a structured log, screenshots, and its artifact or result
 JSON under `evidence/discovery/<run_id>/` or `evidence/replay/<run_id>/`.
@@ -152,14 +156,16 @@ When a run pauses, the terminal prints why, where to act, and how to hand
 back. The simplest way to resolve one by hand is a headed run:
 
 ```bash
-python -m replay.run_replay --capability-name open_sub_account --attended --headed \
-  --param member_id=10002 --param nickname="Rainy Day"
+python -m replay.run_replay --capability-name open_sub_account --headed \
+  --param member_id=10002 --param nickname="Rainy Day" --param initial_deposit=100
 ```
 
-Act in the browser window that opens. A bar at the bottom of the page says
-why the run stopped and has the hand-back buttons: "I completed this step",
-"automation runs this step", or "Cancel". Your clicks and field edits on the
-page are recorded automatically.
+It fills the form itself and pauses at the irreversible "Confirm & Open
+Account" step. Act in the browser window that opened: click the button and
+accept the dialog. A bar at the bottom of the page says why the run stopped
+and has the hand-back buttons: "I completed this step — continue", "Hand
+back — automation runs this step", or "Cancel". Your clicks and field edits
+on the page are recorded automatically and returned in the result.
 
 For a headless or remote run there is no window, so use the operator
 console, which lists every run waiting on a human:
@@ -177,7 +183,7 @@ over CDP and performs scripted actions. Here the goal withholds a decision,
 so the model has to ask:
 
 ```bash
-python -m agent.run_discovery --capability-name open_sub_account \
+python -m agent.run_discovery --capability-name open_sub_account_supervised \
   --goal "Open a new sub-account for member 10001. The nickname and the deposit amount are a supervisor's decision; do not choose them yourself." \
   --entry-path /members/search --param member_id=10001 --param nickname="Vacation Fund" \
   --output new_account_number:string:"The new sub-account's number" \
