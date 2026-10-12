@@ -8,10 +8,8 @@ no model in the loop (**deterministic replay**), returning typed outputs, a
 named business outcome, or a debuggable failure. When a run can't safely
 proceed, a human takes over the same live browser session and hands it back.
 
-The target is a deliberately legacy mock core-banking console
-(`target_app/`): server-rendered, table layout, no ids or test ids, a native
-confirmation dialog, and seeded members that reproduce runtime conditions on
-demand.
+The target is a mock core-banking servicer console built for this project
+(`target_app/`), described [below](#the-target-application).
 
 - Design write-up: [`REPORT.md`](./REPORT.md)
 - Evidence from real runs: [`evidence/`](./evidence/)
@@ -30,6 +28,53 @@ Row numbers refer to [`evidence/INDEX.md`](./evidence/INDEX.md).
 | 3.6 | Human escalation and live-session handoff | `escalation/`, `replay/executor.py` (`_handoff`) | rows 15–17, and three runs resolved by a person ([`evidence/README.md`](./evidence/README.md)) |
 | 3.7 | Heterogeneity and multi-tenant design | `replay/surface.py`, `artifacts/profiles/`; [`REPORT.md`](./REPORT.md) §4 | `tests/test_surface_seam.py`: the engine replaying on a non-browser surface |
 | 8 | Stretch: approval gate; agent-facing catalog | `artifacts/review.py`, `capabilities/` | row 10; rows 18–20 |
+
+## The target application
+
+`target_app/` is a small Flask app standing in for a bank's legacy
+back-office console ("ACME Core Servicer Terminal"). I built a local target
+rather than use a public site so the hard cases could be reproduced on
+demand, with no real credentials and no third party's terms to respect.
+All of its data is invented and held in memory; restarting it resets
+everything, including sub-accounts opened by earlier runs.
+
+**Why it counts as legacy.** Every page is server-rendered with full-page
+form posts and no JavaScript framework. Layout is nested tables. There are
+no `id`, `data-testid` or ARIA attributes and no `<label>` elements: a
+field's label is just the text in the neighbouring table cell. The one
+irreversible action is guarded by a native browser `confirm()` dialog. The
+search page also carries a disabled "Search Advanced" button as a decoy, so
+a locator that matches "Search" loosely is ambiguous and must be rejected.
+
+**Screens and the two flows recorded on it.**
+
+| Screen | Route | What is on it |
+|---|---|---|
+| Operator login | `/login` | employee ID and passcode (`EMP001` / `demo1234`, the app's hardcoded demo login) |
+| Member search | `/members/search` | one field and a Search button; a result row with "View Member", or a "No member found" banner |
+| Member detail | `/members/<id>` | name, date of birth, address, and an accounts table (type, number, balance) |
+| Open sub-account | `/members/<id>/open-subaccount` | nickname and initial deposit, then "Continue" |
+| Confirm | same route, after Continue | a summary and "Confirm & Open Account", which raises the `confirm()` dialog |
+| Success | `/members/<id>/open-subaccount/confirm` | the new account number |
+
+- `lookup_member_balance`: search → detail → read the name and savings
+  balance. Read-only.
+- `open_sub_account`: search → detail → two-field form → confirmation
+  dialog → read the new account number. Ends in an irreversible write.
+
+**Seeded members.** Each one reproduces a specific runtime condition:
+
+| Member | Behaviour | What it exercises |
+|---|---|---|
+| `10001`, `10002` | normal | the happy path, on two different records |
+| `10003` | can be looked up, but opening a sub-account shows "Action not permitted" (compliance hold) | a permission denial as a business outcome |
+| `10004` | the first view of the detail page in a session shows "Your session has expired"; the next loads normally | a recoverable condition |
+| `10005` | the detail page takes three seconds to load | transient slowness |
+| any other ID | "No member found matching ID" | a not-found business outcome |
+
+The sub-account form also validates its input: a missing nickname, a
+non-numeric deposit, or a deposit under $25.00 re-renders the form with an
+error banner. Stopping the app altogether gives the hard-failure case.
 
 ## Setup
 
@@ -56,10 +101,8 @@ real browser against it, so it must be up first. Without it a replay does
 not crash: it returns `failure` at `session_bootstrap` with a
 connection-refused message. Only `pytest` starts the app for itself.
 
-Seeded members: `10001` and `10002` are normal, `10003` is
-permission-restricted, `10004` shows a one-time session-expired
-interstitial, `10005` loads slowly, and anything else does not exist. The
-login is the mock app's own demo credential; nothing here is real data.
+It listens on port 5055 by default (`PORT` overrides it; change
+`TARGET_APP_BASE_URL` and `ALLOWLIST_DOMAINS` in `.env` to match).
 
 ### LLM providers
 
